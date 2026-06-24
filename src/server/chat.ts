@@ -105,7 +105,7 @@ export async function handleChatRequest(request: Request, env: ServerEnv) {
   }
 
   return new Response(streamChatCompletionText(upstream.body), {
-    headers: noStoreHeaders("text/plain; charset=utf-8"),
+    headers: noStoreHeaders("application/x-ndjson; charset=utf-8"),
   });
 }
 
@@ -307,6 +307,7 @@ function buildProviderChatBody(chatRequest: ChatRequest) {
     ...buildThinkingParams(chatRequest),
     max_tokens: chatRequest.maxTokens,
     stream: true,
+    stream_options: { include_usage: true },
   };
 }
 
@@ -470,7 +471,16 @@ function streamChatCompletionText(body: ReadableStream<Uint8Array>) {
             const parsed = JSON.parse(data);
             const text = parsed.choices?.[0]?.delta?.content;
             if (typeof text === "string") {
-              controller.enqueue(encoder.encode(text));
+              controller.enqueue(
+                encoder.encode(JSON.stringify({ type: "token", text }) + "\n"),
+              );
+            }
+
+            const usage = normalizeUsage(parsed.usage);
+            if (usage) {
+              controller.enqueue(
+                encoder.encode(JSON.stringify({ type: "usage", usage }) + "\n"),
+              );
             }
           } catch {
             // Ignore malformed provider chunks; the connection remains open for later chunks.
@@ -479,6 +489,33 @@ function streamChatCompletionText(body: ReadableStream<Uint8Array>) {
       },
     }),
   );
+}
+
+function normalizeUsage(usage: unknown) {
+  const value = objectValue(usage);
+  if (!value) return null;
+
+  const promptTokens = numberValue(value.prompt_tokens);
+  const completionTokens = numberValue(value.completion_tokens);
+  const totalTokens = numberValue(value.total_tokens);
+
+  if (
+    promptTokens === undefined &&
+    completionTokens === undefined &&
+    totalTokens === undefined
+  ) {
+    return null;
+  }
+
+  return {
+    ...(promptTokens !== undefined ? { promptTokens } : {}),
+    ...(completionTokens !== undefined ? { completionTokens } : {}),
+    ...(totalTokens !== undefined ? { totalTokens } : {}),
+  };
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 async function readProviderError(provider: ProviderId, response: Response) {

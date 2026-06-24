@@ -1,8 +1,11 @@
 import { FormEvent, useState } from "react";
-import { CheckCircle2, Eye, EyeOff, Loader2, X } from "lucide-react";
+import { CheckCircle2, Eye, EyeOff, Loader2, Trash2, X } from "lucide-react";
 import type { ProviderId, ProviderKeyState } from "@/types/domain";
 import { testProviderKey } from "@/lib/chatApi";
-import { saveEncryptedProviderKey } from "@/lib/providerKeys";
+import {
+  deleteEncryptedProviderKey,
+  saveEncryptedProviderKey,
+} from "@/lib/providerKeys";
 import type { UnlockedVault } from "@/lib/vault";
 
 type SettingsModalProps = {
@@ -27,8 +30,11 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const [activeProvider, setActiveProvider] = useState<ProviderId>("openai");
   const [testing, setTesting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [statusTone, setStatusTone] = useState<"success" | "danger" | null>(null);
   const activeState = providerKeys[activeProvider];
+  const canDeleteProviderKey = activeState.tested || activeState.models.length > 0;
 
   if (!open) return null;
 
@@ -36,6 +42,7 @@ export function SettingsModal({
     event.preventDefault();
     setTesting(true);
     setStatus(null);
+    setStatusTone(null);
 
     try {
       const result = await testProviderKey(activeProvider, activeState.apiKey);
@@ -50,6 +57,7 @@ export function SettingsModal({
         tested: true,
       });
       setStatus(`${result.message} Key saved encrypted to your account.`);
+      setStatusTone("success");
     } catch (error) {
       onProviderKeyChange(activeProvider, {
         ...activeState,
@@ -58,8 +66,36 @@ export function SettingsModal({
         tested: false,
       });
       setStatus(error instanceof Error ? error.message : "Provider key test failed.");
+      setStatusTone("danger");
     } finally {
       setTesting(false);
+    }
+  }
+
+  async function handleDeleteProviderKey() {
+    setDeleting(true);
+    setStatus(null);
+    setStatusTone(null);
+
+    try {
+      await deleteEncryptedProviderKey(vault, activeProvider);
+      onProviderKeyChange(activeProvider, {
+        apiKey: "",
+        hiddenModelIds: [],
+        models: [],
+        tested: false,
+      });
+      setStatus(`${providerLabels[activeProvider]} key and models deleted.`);
+      setStatusTone("success");
+    } catch (error) {
+      setStatus(
+        error instanceof Error
+          ? error.message
+          : "Unable to delete provider key.",
+      );
+      setStatusTone("danger");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -84,6 +120,7 @@ export function SettingsModal({
               onClick={() => {
                 setActiveProvider(provider);
                 setStatus(null);
+                setStatusTone(null);
               }}
               type="button"
             >
@@ -94,16 +131,16 @@ export function SettingsModal({
 
         <form className="settings-form" onSubmit={handleTest}>
           <input
-              autoComplete="off"
-              onChange={(event) => {
-                const nextApiKey = event.target.value;
-                onProviderKeyChange(activeProvider, {
-                  ...activeState,
-                  apiKey: nextApiKey,
-                  tested: false,
-                });
-              }}
-            placeholder={providerLabels[activeProvider] + ' API key sk-'}
+            autoComplete="off"
+            onChange={(event) => {
+              const nextApiKey = event.target.value;
+              onProviderKeyChange(activeProvider, {
+                ...activeState,
+                apiKey: nextApiKey,
+                tested: false,
+              });
+            }}
+            placeholder={`${providerLabels[activeProvider]} API key sk-`}
             type="password"
             value={activeState.apiKey}
           />
@@ -111,10 +148,23 @@ export function SettingsModal({
             {testing ? <Loader2 className="spin" size={16} /> : <CheckCircle2 size={16} />}
             Test
           </button>
+          {canDeleteProviderKey ? (
+            <button
+              className="danger-button"
+              disabled={testing || deleting}
+              onClick={() => {
+                void handleDeleteProviderKey();
+              }}
+              type="button"
+            >
+              {deleting ? <Loader2 className="spin" size={16} /> : <Trash2 size={16} />}
+              Delete
+            </button>
+          ) : null}
         </form>
 
         {status ? (
-          <div className={activeState.tested ? "notice success" : "notice danger"}>
+          <div className={statusTone === "success" ? "notice success" : "notice danger"}>
             {status}
           </div>
         ) : null}

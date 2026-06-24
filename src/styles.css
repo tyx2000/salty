@@ -538,6 +538,26 @@ textarea {
   font-size: 13px;
 }
 
+.conversation-meta {
+  align-items: center;
+  display: flex;
+  flex: 0 1 auto;
+  gap: 10px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.conversation-meta span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-meta span:last-child {
+  font-variant-numeric: tabular-nums;
+}
+
 .messages {
   align-content: start;
   display: grid;
@@ -706,6 +726,15 @@ textarea {
   padding-left: 0;
   padding-right: 0;
   width: 100%;
+}
+
+.message-stats {
+  color: #8b95a7;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  justify-self: start;
+  line-height: 1.4;
+  margin-top: -2px;
 }
 
 .attachment-card {
@@ -1358,7 +1387,7 @@ textarea {
 .settings-form {
   display: grid;
   gap: 8px;
-  grid-template-columns: minmax(0, 1fr) 86px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: end;
   padding: 4px 0;
 }
@@ -1734,6 +1763,17 @@ textarea {
   .conversation {
     height: auto;
     min-height: 0;
+  }
+
+  .conversation-header {
+    padding: 0 16px;
+  }
+
+  .conversation-meta {
+    flex-direction: column;
+    gap: 2px;
+    justify-content: center;
+    text-align: right;
   }
 
   .messages {

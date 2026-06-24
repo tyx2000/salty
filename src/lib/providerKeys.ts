@@ -84,6 +84,19 @@ export async function saveEncryptedProviderKey(
   if (error) throw error;
 }
 
+export async function deleteEncryptedProviderKey(
+  vault: UnlockedVault,
+  provider: ProviderId,
+) {
+  const { error } = await supabase
+    .from("user_provider_keys")
+    .delete()
+    .eq("user_id", vault.userId)
+    .eq("provider", provider);
+
+  if (error) throw error;
+}
+
 function keyHint(apiKey: string) {
   if (apiKey.length <= 8) return "saved";
   return `${apiKey.slice(0, 3)}...${apiKey.slice(-4)}`;

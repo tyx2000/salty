@@ -31,6 +31,17 @@ export type ChatAttachment = {
   dataUrl?: string;
 };
 
+export type ChatUsage = {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+};
+
+export type ChatResponseStats = {
+  elapsedMs: number;
+  usage?: ChatUsage;
+};
+
 export type ChatMessage = {
   id: string;
   role: ChatRole;
@@ -39,6 +50,7 @@ export type ChatMessage = {
   model?: string;
   parts: MessagePart[];
   attachments?: Record<string, ChatAttachment>;
+  responseStats?: ChatResponseStats;
   createdAt: string;
 };
 

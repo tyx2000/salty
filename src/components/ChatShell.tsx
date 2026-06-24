@@ -29,6 +29,7 @@ import {
 import type {
   ChatAttachment,
   ChatMessage,
+  ChatResponseStats,
   MessagePart,
   ProviderId,
   ProviderKeyState,
@@ -173,6 +174,10 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
   const activeConversationTitle =
     conversations.find((conversation) => conversation.id === conversationId)?.title ??
     "New chat";
+  const contextTokenEstimate = useMemo(
+    () => estimateContextTokens(messages, draft, pendingFiles),
+    [messages, draft, pendingFiles],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -389,6 +394,11 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
 
     if (provider !== providerId) return;
 
+    if (models.length === 0) {
+      setModel("");
+      return;
+    }
+
     if (firstVisibleModel) {
       setModel((currentModel) => {
         const selectedStillVisible = models.some(
@@ -601,6 +611,12 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
       provider: turnProvider,
       model: turnModel,
       parts: [{ type: "markdown", text: "" }],
+      responseStats: {
+        elapsedMs: 0,
+        usage: {
+          totalTokens: 0,
+        },
+      },
       createdAt: new Date().toISOString(),
     };
 
@@ -610,9 +626,35 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     }
     setMessages([...historyMessages, userMessage, assistantMessage]);
 
+    let statsTimer: number | undefined;
+
     try {
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
+      const responseStartedAt = performance.now();
+      let streamedText = "";
+      let latestUsage = undefined as ChatResponseStats["usage"] | undefined;
+      statsTimer = window.setInterval(() => {
+        const elapsedMs = Math.max(
+          0,
+          Math.round(performance.now() - responseStartedAt),
+        );
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === assistantMessage.id
+              ? {
+                  ...message,
+                  responseStats: {
+                    elapsedMs,
+                    usage:
+                      latestUsage ??
+                      estimateUsageFromText(streamedText),
+                  },
+                }
+              : message,
+          ),
+        );
+      }, 250);
       const isNewConversation = !conversationId;
       const nextConversationId =
         conversationId ??
@@ -636,7 +678,7 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
       });
       await afterUserMessageSaved?.(userMessage);
 
-      const assistantText = await streamChat({
+      const { text: assistantText, stats } = await streamChat({
         provider: turnProvider,
         model: turnModel,
         apiKey,
@@ -654,12 +696,41 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
         ],
         signal: abortController.signal,
         onToken: (token) => {
+          streamedText += token;
+          const elapsedMs = Math.max(
+            0,
+            Math.round(performance.now() - responseStartedAt),
+          );
+          const estimatedUsage = estimateUsageFromText(streamedText);
           setMessages((current) =>
             current.map((message) =>
               message.id === assistantMessage.id
                 ? {
                     ...message,
                     parts: appendTokenToMessageParts(message.parts, token),
+                    responseStats: {
+                      elapsedMs,
+                      usage: latestUsage ?? estimatedUsage,
+                    },
+                  }
+                : message,
+            ),
+          );
+        },
+        onUsage: (usage) => {
+          latestUsage = usage;
+          setMessages((current) =>
+            current.map((message) =>
+              message.id === assistantMessage.id
+                ? {
+                    ...message,
+                    responseStats: {
+                      elapsedMs: Math.max(
+                        0,
+                        Math.round(performance.now() - responseStartedAt),
+                      ),
+                      usage,
+                    },
                   }
                 : message,
             ),
@@ -674,6 +745,7 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
             ...assistantMessage,
             status: abortController.signal.aborted ? "cancelled" : "completed",
             parts: [{ type: "markdown", text: assistantText }],
+            responseStats: stats,
           },
           nextConversationId,
           turnProvider,
@@ -686,6 +758,7 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
             ? {
                 ...message,
                 status: abortController.signal.aborted ? "cancelled" : "completed",
+                responseStats: stats,
               }
             : message,
         ),
@@ -701,6 +774,7 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
         current.filter((message) => message.id !== assistantMessage.id),
       );
     } finally {
+      if (statsTimer !== undefined) window.clearInterval(statsTimer);
       abortControllerRef.current = null;
       setBusy(false);
     }
@@ -945,7 +1019,10 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
       <div className="conversation">
         <header className="conversation-header">
           <strong>{activeConversationTitle}</strong>
-          {model ? <span>{model}</span> : <span>No model selected</span>}
+          <div className="conversation-meta">
+            <span>{model ? model : "No model selected"}</span>
+            <span>Context ≈{contextTokenEstimate.toLocaleString()} tokens</span>
+          </div>
         </header>
 
         <div
@@ -1036,6 +1113,12 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
                     >
                       <Trash2 size={14} />
                     </button>
+                  </div>
+                ) : null}
+                {message.role === "assistant" &&
+                message.responseStats ? (
+                  <div className="message-stats">
+                    {formatResponseStats(message.responseStats)}
                   </div>
                 ) : null}
               </article>
@@ -1375,6 +1458,79 @@ function textFromMessage(message: ChatMessage) {
     })
     .join("\n\n")
     .trim();
+}
+
+function estimateContextTokens(
+  messages: ChatMessage[],
+  draft: string,
+  pendingFiles: File[],
+) {
+  const messageTokens = messages.reduce((total, message) => {
+    const textTokens = message.parts.reduce((partTotal, part) => {
+      if (part.type === "text" || part.type === "markdown") {
+        return partTotal + estimateTokenCount(part.text);
+      }
+      if (part.type === "json") {
+        return partTotal + estimateTokenCount(JSON.stringify(part.value));
+      }
+      if (part.type === "tool_call" || part.type === "tool_result") {
+        return partTotal + estimateTokenCount(JSON.stringify(part));
+      }
+      return partTotal;
+    }, 0);
+    const attachmentTokens = Object.values(message.attachments ?? {}).reduce(
+      (attachmentTotal, attachment) =>
+        attachmentTotal + estimateAttachmentTokens(attachment.mimeType),
+      0,
+    );
+
+    return total + textTokens + attachmentTokens + 4;
+  }, 0);
+
+  const draftTokens = estimateTokenCount(draft);
+  const pendingFileTokens = pendingFiles.reduce(
+    (total, file) => total + estimateAttachmentTokens(file.type),
+    0,
+  );
+
+  return messageTokens + draftTokens + pendingFileTokens;
+}
+
+function estimateAttachmentTokens(mimeType: string) {
+  if (mimeType.startsWith("image/")) return 256;
+  return 64;
+}
+
+function formatResponseStats(stats: ChatResponseStats) {
+  const values = [formatDuration(stats.elapsedMs)];
+  const totalTokens = stats.usage?.totalTokens;
+
+  if (typeof totalTokens === "number") {
+    values.push(`${totalTokens.toLocaleString()} tokens`);
+  }
+
+  return values.join(" · ");
+}
+
+function estimateUsageFromText(text: string) {
+  return {
+    totalTokens: estimateTokenCount(text),
+  };
+}
+
+function estimateTokenCount(text: string) {
+  if (!text.trim()) return 0;
+
+  const cjkCharacters = text.match(/[\u3400-\u9fff\uf900-\ufaff]/g)?.length ?? 0;
+  const nonCjkText = text.replace(/[\u3400-\u9fff\uf900-\ufaff]/g, " ");
+  const wordLikeTokens = nonCjkText.match(/[A-Za-z0-9_]+|[^\sA-Za-z0-9_]/g)?.length ?? 0;
+
+  return Math.max(1, Math.ceil(cjkCharacters + wordLikeTokens * 1.3));
+}
+
+function formatDuration(elapsedMs: number) {
+  if (elapsedMs < 1000) return `${elapsedMs}ms`;
+  return `${(elapsedMs / 1000).toFixed(elapsedMs < 10000 ? 1 : 0)}s`;
 }
 
 function fileToDataUrl(file: File) {

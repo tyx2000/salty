@@ -1,6 +1,7 @@
 import { supabase } from "./supabase";
 import type {
   ChatMessage,
+  ChatUsage,
   MessagePart,
   ProviderId,
   ProviderModel,
@@ -16,12 +17,18 @@ export type ChatApiInput = {
   thinkingMode?: ThinkingMode;
   reasoningEffort?: ReasoningEffort;
   onToken: (token: string) => void;
+  onUsage?: (usage: ChatUsage) => void;
   signal?: AbortSignal;
 };
+
+type ChatStreamEvent =
+  | { type: "token"; text: string }
+  | { type: "usage"; usage: ChatUsage };
 
 export async function streamChat(input: ChatApiInput) {
   let assistantText = "";
   let response: Response;
+  const startedAt = performance.now();
 
   try {
     response = await fetch("/api/chat", {
@@ -42,7 +49,14 @@ export async function streamChat(input: ChatApiInput) {
       }),
     });
   } catch (error) {
-    if (input.signal?.aborted) return assistantText;
+    if (input.signal?.aborted) {
+      return {
+        text: assistantText,
+        stats: {
+          elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
+        },
+      };
+    }
     throw error;
   }
 
@@ -55,20 +69,65 @@ export async function streamChat(input: ChatApiInput) {
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
+  let buffer = "";
+  let usage: ChatUsage | undefined;
 
   try {
     while (true) {
       const { value, done } = await reader.read();
-      if (done) break;
-      const token = decoder.decode(value, { stream: true });
-      assistantText += token;
-      input.onToken(token);
+      if (done) {
+        buffer += decoder.decode();
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+
+      for (const line of lines) {
+        const event = parseChatStreamEvent(line);
+        if (!event) continue;
+
+        if (event.type === "token") {
+          assistantText += event.text;
+          input.onToken(event.text);
+        } else {
+          usage = event.usage;
+          input.onUsage?.(event.usage);
+        }
+      }
     }
   } catch (error) {
     if (!input.signal?.aborted) throw error;
   }
 
-  return assistantText;
+  if (buffer.trim()) {
+    const event = parseChatStreamEvent(buffer);
+    if (event?.type === "usage") {
+      usage = event.usage;
+      input.onUsage?.(event.usage);
+    }
+  }
+
+  return {
+    text: assistantText,
+    stats: {
+      elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      usage,
+    },
+  };
+}
+
+function parseChatStreamEvent(line: string): ChatStreamEvent | null {
+  if (!line.trim()) return null;
+
+  try {
+    const event = JSON.parse(line) as ChatStreamEvent;
+    if (event.type === "token" && typeof event.text === "string") return event;
+    if (event.type === "usage" && event.usage) return event;
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export function textFromParts(parts: MessagePart[]) {
