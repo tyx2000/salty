@@ -611,12 +611,6 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
       provider: turnProvider,
       model: turnModel,
       parts: [{ type: "markdown", text: "" }],
-      responseStats: {
-        elapsedMs: 0,
-        usage: {
-          totalTokens: 0,
-        },
-      },
       createdAt: new Date().toISOString(),
     };
 
@@ -635,6 +629,7 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
       let streamedText = "";
       let latestUsage = undefined as ChatResponseStats["usage"] | undefined;
       statsTimer = window.setInterval(() => {
+        if (!streamedText.trim()) return;
         const elapsedMs = Math.max(
           0,
           Math.round(performance.now() - responseStartedAt),
@@ -751,6 +746,12 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
           turnProvider,
           { model: turnModel },
         );
+      } else {
+        setMessages((current) =>
+          current.filter((message) => message.id !== assistantMessage.id),
+        );
+        await touchConversation(nextConversationId);
+        return;
       }
       setMessages((current) =>
         current.map((message) =>
