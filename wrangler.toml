@@ -1,6 +1,11 @@
 name = "salty"
-compatibility_date = "2026-06-22"
-pages_build_output_dir = "dist"
+compatibility_date = "2026-06-24"
+main = "src/worker.ts"
+
+[assets]
+directory = "dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
 
 [vars]
 # Non-secret runtime defaults can go here. Keep Supabase service role keys out of this file.

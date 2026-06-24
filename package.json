@@ -9,8 +9,8 @@
     "preview": "vite preview --host 127.0.0.1",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "cf:dev": "npx wrangler pages dev dist",
-    "cf:deploy": "npx wrangler pages deploy dist"
+    "cf:dev": "npm run build && npx wrangler dev",
+    "cf:deploy": "npm run build && npx wrangler deploy"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.89.0",
