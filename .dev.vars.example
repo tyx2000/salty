@@ -1,0 +1,8 @@
+# Cloudflare Pages Functions local runtime variables.
+# Use the same values as VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+
+# Optional. OPENAI_BASE_URL should include /v1 when set.
+OPENAI_BASE_URL=https://api.openai.com/v1
+DEEPSEEK_BASE_URL=https://api.deepseek.com

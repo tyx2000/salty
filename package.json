@@ -1,0 +1,40 @@
+{
+  "name": "salty",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "cf:dev": "npx wrangler pages dev dist",
+    "cf:deploy": "npx wrangler pages deploy dist"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.89.0",
+    "drizzle-orm": "^0.45.2",
+    "lucide-react": "^0.561.0",
+    "postgres": "^3.4.9",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260620.0",
+    "@types/node": "^24.10.2",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.2",
+    "dotenv": "^17.2.3",
+    "drizzle-kit": "^0.31.10",
+    "typescript": "^5.9.3",
+    "undici": "^8.5.0",
+    "vite": "^7.2.7"
+  },
+  "overrides": {
+    "browserslist": "4.28.4"
+  }
+}
