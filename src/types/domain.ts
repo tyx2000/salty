@@ -54,6 +54,13 @@ export type ChatMessage = {
   createdAt: string;
 };
 
+export type SharedSnapshot = {
+  kind: "conversation" | "turn";
+  title: string;
+  messages: ChatMessage[];
+  createdAt: string;
+};
+
 export type ProviderModel = {
   id: string;
   description?: string;
@@ -96,6 +103,8 @@ export type StoredMessage = {
   model_ciphertext: string | null;
   model_nonce: string | null;
   status: string;
+  encrypted_metadata: string | null;
+  encrypted_metadata_nonce: string | null;
   created_at: string;
 };
 

@@ -245,7 +245,7 @@ textarea {
   color: #24406f;
   line-height: 1.45;
   margin: 0 auto;
-  max-width: 860px;
+  max-width: 812px;
   padding: 12px;
   text-wrap: pretty;
   width: calc(100% - 48px);
@@ -515,6 +515,54 @@ textarea {
   overflow: hidden;
 }
 
+.share-active {
+  min-height: 100vh;
+}
+
+.share-page {
+  background: #ffffff;
+  min-height: 100vh;
+}
+
+.share-header {
+  align-items: center;
+  border-bottom: 1px solid #eeeeeb;
+  display: flex;
+  min-height: 64px;
+  padding: 0 24px;
+}
+
+.share-content {
+  display: grid;
+  gap: 24px;
+  margin: 0 auto;
+  max-width: 900px;
+  padding: 32px 24px 64px;
+}
+
+.share-title {
+  display: grid;
+  gap: 6px;
+}
+
+.share-title span {
+  color: #697386;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.share-title h1 {
+  font-size: 28px;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.share-messages {
+  display: grid;
+  gap: 22px;
+}
+
 .conversation-header {
   align-items: center;
   border-bottom: 1px solid #eeeeeb;
@@ -678,10 +726,31 @@ textarea {
   justify-items: end;
 }
 
+.user-message-row {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  max-width: 70%;
+}
+
 .message.user .message-content {
   background: #f1f0eb;
   color: #202124;
+  max-width: 100%;
   text-wrap: pretty;
+}
+
+.message-failure-icon {
+  align-items: center;
+  background: #dc2626;
+  border-radius: 999px;
+  color: #ffffff;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 24px;
+  justify-content: center;
+  width: 24px;
 }
 
 .message-actions {
@@ -721,6 +790,59 @@ textarea {
   cursor: not-allowed;
 }
 
+.assistant-message-meta {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  justify-self: start;
+  margin-top: -2px;
+}
+
+.assistant-message-meta button {
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: #697386;
+  display: inline-grid;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  place-items: center;
+  transition-duration: 160ms;
+  transition-property: background, color, scale;
+  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  width: 24px;
+}
+
+.assistant-message-meta button:hover:not(:disabled) {
+  background: #f1f0eb;
+  color: #273244;
+}
+
+.assistant-message-meta button:active:not(:disabled) {
+  scale: 0.96;
+}
+
+.assistant-message-meta button:disabled {
+  color: #c3c8d0;
+  cursor: not-allowed;
+}
+
+.conversation-share-button {
+  background: #f1f0eb;
+  border-radius: 999px;
+  color: #404040;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  width: 28px;
+}
+
+.conversation-share-button:hover:not(:disabled) {
+  background: #e5e2da;
+  color: #202124;
+}
+
 .message.assistant .message-content {
   max-width: 100%;
   padding-left: 0;
@@ -732,9 +854,7 @@ textarea {
   color: #8b95a7;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  justify-self: start;
   line-height: 1.4;
-  margin-top: -2px;
 }
 
 .attachment-card {
@@ -828,6 +948,22 @@ textarea {
 .attachment-card span {
   color: #697386;
   font-weight: 500;
+}
+
+.attachment-download {
+  background: #ffffff;
+  border-radius: 999px;
+  color: #273244;
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 700;
+  margin-left: auto;
+  padding: 4px 8px;
+  text-decoration: none;
+}
+
+.attachment-download:hover {
+  background: #eceae5;
 }
 
 .json-part {

@@ -6,11 +6,11 @@ import {
   exportRawKey,
   importAesKey,
 } from "./crypto";
+import { flushPendingAttachmentStorageRemovals } from "./attachmentStorage";
 import { ensureProfileId } from "./profiles";
+import { normalizeAtomicDeleteRpcError } from "./supabaseRpcErrors";
 import { supabase } from "./supabase";
 import type { UnlockedVault } from "./vault";
-
-const attachmentBucket = "encrypted-attachments";
 
 function conversationAad(userId: string, conversationId: string) {
   return `conversation:${userId}:${conversationId}:v1`;
@@ -90,31 +90,16 @@ export async function createConversation(
   return id;
 }
 
-export async function deleteConversation(conversationId: string) {
-  const { data: attachmentRows, error: attachmentError } = await supabase
-    .from("attachments")
-    .select("storage_path")
-    .eq("conversation_id", conversationId)
-    .returns<Array<{ storage_path: string }>>();
+export async function deleteConversation(
+  vault: Pick<UnlockedVault, "userId">,
+  conversationId: string,
+) {
+  const { error } = await supabase.rpc("delete_conversation_atomic", {
+    p_conversation_id: conversationId,
+  });
+  if (error) throw normalizeAtomicDeleteRpcError(error, "delete conversation");
 
-  if (attachmentError) throw attachmentError;
-
-  const storagePaths = [
-    ...new Set((attachmentRows ?? []).map((row) => row.storage_path)),
-  ];
-  if (storagePaths.length > 0) {
-    const { error: storageError } = await supabase.storage
-      .from(attachmentBucket)
-      .remove(storagePaths);
-    if (storageError) throw storageError;
-  }
-
-  const { error } = await supabase
-    .from("conversations")
-    .delete()
-    .eq("id", conversationId);
-
-  if (error) throw error;
+  await flushPendingAttachmentStorageRemovals(vault.userId);
 }
 
 export async function touchConversation(conversationId: string) {

@@ -9,8 +9,10 @@ alter table conversations enable row level security;
 alter table messages enable row level security;
 alter table message_parts enable row level security;
 alter table attachments enable row level security;
+alter table attachment_storage_deletions enable row level security;
 alter table usage_events enable row level security;
 alter table shared_conversations enable row level security;
+alter table shared_message_turns enable row level security;
 
 create policy "profiles are self owned"
 on profiles for all
@@ -64,6 +66,11 @@ on attachments for all
 using ((select auth.uid()) = user_id)
 with check ((select auth.uid()) = user_id);
 
+create policy "attachment storage deletions are self owned"
+on attachment_storage_deletions for all
+using ((select auth.uid()) = user_id)
+with check ((select auth.uid()) = user_id);
+
 create policy "usage events are self owned"
 on usage_events for all
 using ((select auth.uid()) = user_id)
@@ -73,6 +80,29 @@ create policy "shares are self owned"
 on shared_conversations for all
 using ((select auth.uid()) = user_id)
 with check ((select auth.uid()) = user_id);
+
+create policy "public conversation shares are readable"
+on shared_conversations for select
+to anon, authenticated
+using (
+  visibility in ('link', 'public')
+  and snapshot_ciphertext is not null
+  and snapshot_nonce is not null
+  and (expires_at is null or expires_at > now())
+);
+
+create policy "shared message turns are self owned"
+on shared_message_turns for all
+using ((select auth.uid()) = user_id)
+with check ((select auth.uid()) = user_id);
+
+create policy "public message turn shares are readable"
+on shared_message_turns for select
+to anon, authenticated
+using (
+  visibility in ('link', 'public')
+  and (expires_at is null or expires_at > now())
+);
 
 -- Encrypted attachment blobs live in Supabase Storage. The bytes are encrypted
 -- in the browser before upload; this policy only gates object access by user path.

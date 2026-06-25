@@ -3,11 +3,14 @@ import type { Session, User } from "@supabase/supabase-js";
 import { LogOut, ShieldCheck } from "lucide-react";
 import { ChatShell } from "./components/ChatShell";
 import { LoginPanel } from "./components/LoginPanel";
+import { ShareViewer } from "./components/ShareViewer";
 import { env } from "./lib/env";
+import { parseShareRoute } from "./lib/shares";
 import { supabase } from "./lib/supabase";
 import { autoUnlockVault, forgetVault, type UnlockedVault } from "./lib/vault";
 
 export default function App() {
+  const shareRoute = parseShareRoute(window.location.pathname);
   const [session, setSession] = useState<Session | null>(null);
   const [vault, setVault] = useState<UnlockedVault | null>(null);
   const [loadingSession, setLoadingSession] = useState(true);
@@ -66,6 +69,14 @@ export default function App() {
 
   if (loadingSession) {
     return <main className="centered">Loading secure session...</main>;
+  }
+
+  if (shareRoute) {
+    return (
+      <main className="app-shell share-active">
+        <ShareViewer kind={shareRoute.kind} token={shareRoute.token} />
+      </main>
+    );
   }
 
   return (

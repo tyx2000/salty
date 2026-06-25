@@ -10,6 +10,7 @@ import {
 } from "react";
 import type { User } from "@supabase/supabase-js";
 import {
+  CircleAlert,
   Brain,
   Check,
   ChevronDown,
@@ -22,6 +23,7 @@ import {
   RotateCcw,
   Send,
   ShieldCheck,
+  Share2,
   Square,
   Trash2,
   X,
@@ -49,16 +51,24 @@ import {
   deleteMessages,
   encryptedAttachmentToDataUrl,
   loadMessages,
+  reassignAttachmentsToMessage,
   saveMessage,
+  updateMessageContent,
+  updateMessageStatus,
 } from "@/lib/messages";
 import type { PendingAttachment } from "@/lib/messages";
-import { streamChat, testProviderKey } from "@/lib/chatApi";
+import { flushPendingAttachmentStorageRemovals } from "@/lib/attachmentStorage";
+import { streamChat, testProviderKey, textFromParts } from "@/lib/chatApi";
 import { env } from "@/lib/env";
 import { enrichProviderModel, supportsAttachments } from "@/lib/modelCapabilities";
 import {
   emptyProviderKeyState,
   loadEncryptedProviderKeys,
 } from "@/lib/providerKeys";
+import {
+  createConversationShare,
+  createMessageTurnShare,
+} from "@/lib/shares";
 import type { UnlockedVault } from "@/lib/vault";
 import { ConversationList } from "./ConversationList";
 import { MessagePartRenderer } from "./MessagePartRenderer";
@@ -69,6 +79,10 @@ const providerLabels: Record<ProviderId, string> = {
   openai: "OpenAI",
   deepseek: "DeepSeek",
 };
+
+function formatProviderLabel(providerId: ProviderId) {
+  return providerLabels[providerId] ?? providerId;
+}
 
 const reasoningEffortOptions: Array<{ value: ReasoningEffort; label: string }> = [
   { value: "default", label: "Default" },
@@ -143,6 +157,7 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
   const [loadingConversations, setLoadingConversations] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   const mobileConversationsRef = useRef<HTMLDivElement | null>(null);
@@ -151,6 +166,8 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const autoScrollRef = useRef(true);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const busyRef = useRef(false);
+  const statsTimerRef = useRef<number | undefined>(undefined);
 
   const availableModels = useMemo<AvailableModel[]>(() => {
     return (["openai", "deepseek"] as ProviderId[]).flatMap((providerId) =>
@@ -180,6 +197,12 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
   );
 
   useEffect(() => {
+    document.title = conversationId
+      ? `${activeConversationTitle} — ${env.appName}`
+      : env.appName;
+  }, [conversationId, activeConversationTitle]);
+
+  useEffect(() => {
     let cancelled = false;
 
     async function loadExistingConversations() {
@@ -187,6 +210,7 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
       setError(null);
 
       try {
+        await flushPendingAttachmentStorageRemovals(vault.userId);
         const rows = await loadConversations(vault);
         if (!cancelled) {
           setConversations(rows);
@@ -286,6 +310,29 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, [reasoningMenuOpen]);
+
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+      if (statsTimerRef.current !== undefined) {
+        window.clearInterval(statsTimerRef.current);
+        statsTimerRef.current = undefined;
+      }
+      busyRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!busy) return;
+
+    function handleBeforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [busy]);
 
   useEffect(() => {
     const node = messagesRef.current;
@@ -428,7 +475,16 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     autoScrollRef.current = true;
 
     try {
-      setMessages(await loadMessages(vault, nextConversationId));
+      const loadedMessages = await loadMessages(vault, nextConversationId);
+      setMessages(
+        busyRef.current
+          ? loadedMessages
+          : await settleInterruptedAssistantMessages(
+              vault,
+              loadedMessages,
+              nextConversationId,
+            ),
+      );
     } catch (unknownError) {
       setError(
         unknownError instanceof Error
@@ -475,7 +531,7 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     if (!pendingDelete) return;
 
     try {
-      await deleteConversation(pendingDelete.id);
+      await deleteConversation(vault, pendingDelete.id);
     } catch (unknownError) {
       setError(
         unknownError instanceof Error
@@ -502,7 +558,7 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if ((!draft.trim() && pendingFiles.length === 0) || busy) return;
+    if ((!draft.trim() && pendingFiles.length === 0) || busyRef.current) return;
 
     const submittedDraft = draft.trim();
     const submittedFiles = pendingFiles;
@@ -526,6 +582,18 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     });
   }
 
+  function acquireBusyLock() {
+    if (busyRef.current) return false;
+    busyRef.current = true;
+    setBusy(true);
+    return true;
+  }
+
+  function releaseBusyLock() {
+    busyRef.current = false;
+    setBusy(false);
+  }
+
   async function sendUserTurn({
     parts,
     pendingAttachments = [],
@@ -535,7 +603,8 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     turnProvider = provider,
     turnModel = model,
     clearComposer = false,
-    afterUserMessageSaved,
+    afterTurnSaved,
+    busyLockAcquired = false,
   }: {
     parts: MessagePart[];
     pendingAttachments?: PendingAttachment[];
@@ -545,18 +614,36 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     turnProvider?: ProviderId;
     turnModel?: string;
     clearComposer?: boolean;
-    afterUserMessageSaved?: (userMessage: ChatMessage) => Promise<void>;
+    afterTurnSaved?: (userMessage: ChatMessage, assistantMessage: ChatMessage) => Promise<void>;
+    busyLockAcquired?: boolean;
   }) {
+    let lockHeld = busyLockAcquired;
+    const releaseHeldBusyLock = () => {
+      if (!lockHeld) return;
+      releaseBusyLock();
+      lockHeld = false;
+    };
+
     if (!turnModel) {
+      releaseHeldBusyLock();
       setSettingsOpen(true);
       setError("Test a provider key in Settings before choosing a model.");
       return;
     }
 
-    const apiKey = providerKeys[turnProvider].apiKey.trim();
-    if (!apiKey) {
+    const providerKeyState = providerKeys[turnProvider];
+    if (!providerKeyState) {
+      releaseHeldBusyLock();
       setSettingsOpen(true);
-      setError(`Configure and test a ${providerLabels[turnProvider]} API key first.`);
+      setError(`Configure and test a ${formatProviderLabel(turnProvider)} API key first.`);
+      return;
+    }
+
+    const apiKey = providerKeyState.apiKey.trim();
+    if (!apiKey) {
+      releaseHeldBusyLock();
+      setSettingsOpen(true);
+      setError(`Configure and test a ${formatProviderLabel(turnProvider)} API key first.`);
       return;
     }
 
@@ -564,28 +651,43 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
       (pendingAttachments.length > 0 || reusedAttachments.length > 0) &&
       !supportsAttachments(turnProvider, turnModel)
     ) {
+      releaseHeldBusyLock();
       setError("The selected model is not configured for file or image input.");
       return;
     }
 
-    setBusy(true);
+    if (!lockHeld) {
+      if (!acquireBusyLock()) return;
+      lockHeld = true;
+    }
     setError(null);
     autoScrollRef.current = true;
 
-    const pendingAttachmentMap = Object.fromEntries(
-      await Promise.all(
-        pendingAttachments.map(async (attachment) => [
-          attachment.id,
-          {
-            id: attachment.id,
-            fileName: attachment.file.name,
-            mimeType: attachment.file.type || "application/octet-stream",
-            sizeBytes: attachment.file.size,
-            dataUrl: await fileToDataUrl(attachment.file),
-          },
-        ]),
-      ),
-    ) as Record<string, ChatAttachment>;
+    let pendingAttachmentMap: Record<string, ChatAttachment>;
+    try {
+      pendingAttachmentMap = Object.fromEntries(
+        await Promise.all(
+          pendingAttachments.map(async (attachment) => [
+            attachment.id,
+            {
+              id: attachment.id,
+              fileName: attachment.file.name,
+              mimeType: attachment.file.type || "application/octet-stream",
+              sizeBytes: attachment.file.size,
+              dataUrl: await fileToDataUrl(attachment.file),
+            },
+          ]),
+        ),
+      ) as Record<string, ChatAttachment>;
+    } catch (unknownError) {
+      setError(
+        unknownError instanceof Error
+          ? unknownError.message
+          : "Unable to read attachments.",
+      );
+      releaseHeldBusyLock();
+      return;
+    }
     const reusedAttachmentMap = Object.fromEntries(
       reusedAttachments.map((attachment) => [attachment.id, attachment]),
     );
@@ -597,12 +699,16 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
-      status: "completed",
+      status: "pending",
       provider: turnProvider,
       model: turnModel,
       parts,
       attachments: attachmentMap,
       createdAt: new Date().toISOString(),
+    };
+    const completedUserMessage: ChatMessage = {
+      ...userMessage,
+      status: "completed",
     };
     const assistantMessage: ChatMessage = {
       id: crypto.randomUUID(),
@@ -618,13 +724,52 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
       setDraft("");
       setPendingFiles([]);
     }
-    setMessages([...historyMessages, userMessage, assistantMessage]);
+    setMessages([...historyMessages, userMessage]);
 
     let statsTimer: number | undefined;
+    let assistantPersisted = false;
+    let userPersisted = false;
+    let createdConversationId: string | null = null;
+    let assistantContentPersisted = false;
 
     try {
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
+      const isNewConversation = !conversationId;
+      const nextConversationId =
+        conversationId ??
+        (await createConversation(vault, title.slice(0, 80), turnProvider, turnModel));
+      if (isNewConversation) createdConversationId = nextConversationId;
+      setConversationId(nextConversationId);
+      pushConversationRoute(nextConversationId);
+      setConversations((current) =>
+        isNewConversation
+          ? upsertConversation(current, {
+              id: nextConversationId,
+              title: title.slice(0, 80) || "New conversation",
+              updatedAt: new Date().toISOString(),
+            })
+          : bumpConversation(current, nextConversationId),
+      );
+
+      await saveMessage(vault, completedUserMessage, nextConversationId, turnProvider, {
+        model: turnModel,
+        pendingAttachments,
+      });
+      userPersisted = true;
+      await saveMessage(vault, assistantMessage, nextConversationId, turnProvider, {
+        model: turnModel,
+      });
+      assistantPersisted = true;
+      setMessages((current) => [
+        ...current.map((message) =>
+          message.id === userMessage.id
+            ? completedUserMessage
+            : message,
+        ),
+        assistantMessage,
+      ]);
+
       const responseStartedAt = performance.now();
       let streamedText = "";
       let latestUsage = undefined as ChatResponseStats["usage"] | undefined;
@@ -650,28 +795,7 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
           ),
         );
       }, 250);
-      const isNewConversation = !conversationId;
-      const nextConversationId =
-        conversationId ??
-        (await createConversation(vault, title.slice(0, 80), turnProvider, turnModel));
-      setConversationId(nextConversationId);
-      pushConversationRoute(nextConversationId);
-      setConversations((current) =>
-        isNewConversation
-          ? upsertConversation(current, {
-              id: nextConversationId,
-              title: title.slice(0, 80) || "New conversation",
-              updatedAt: new Date().toISOString(),
-            })
-          : bumpConversation(current, nextConversationId),
-      );
-
-      await saveMessage(vault, userMessage, nextConversationId, turnProvider, {
-        model: turnModel,
-        pendingAttachments,
-        existingAttachmentIds: reusedAttachments.map((attachment) => attachment.id),
-      });
-      await afterUserMessageSaved?.(userMessage);
+      statsTimerRef.current = statsTimer;
 
       const { text: assistantText, stats } = await streamChat({
         provider: turnProvider,
@@ -682,9 +806,9 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
         messages: [
           ...historyMessages,
           {
-            ...userMessage,
+            ...completedUserMessage,
             attachments: {
-              ...userMessage.attachments,
+              ...completedUserMessage.attachments,
               ...requestAttachmentMap,
             },
           },
@@ -733,63 +857,123 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
         },
       });
 
-      if (assistantText.trim()) {
-        await saveMessage(
+      const assistantTextHasContent = assistantText.trim().length > 0;
+      if (assistantTextHasContent) {
+        const completedAssistantMessage: ChatMessage = {
+          ...assistantMessage,
+          status: abortController.signal.aborted ? "cancelled" : "completed",
+          parts: [{ type: "markdown", text: assistantText }],
+          responseStats: stats,
+        };
+        const { cleanupFailed } = await updateMessageContent(
           vault,
-          {
-            ...assistantMessage,
-            status: abortController.signal.aborted ? "cancelled" : "completed",
-            parts: [{ type: "markdown", text: assistantText }],
-            responseStats: stats,
-          },
+          completedAssistantMessage,
           nextConversationId,
           turnProvider,
           { model: turnModel },
         );
-      } else {
+        assistantContentPersisted = true;
+        if (cleanupFailed) {
+          setError("Response saved, but old message parts could not be cleaned up.");
+        }
+        try {
+          await afterTurnSaved?.(completedUserMessage, completedAssistantMessage);
+        } catch {
+          setError("Response saved, but the previous retry turn could not be deleted.");
+        }
         setMessages((current) =>
-          current.filter((message) => message.id !== assistantMessage.id),
+          current.map((message) =>
+            message.id === assistantMessage.id
+              ? completedAssistantMessage
+              : message,
+          ),
         );
-        await touchConversation(nextConversationId);
+      } else {
+        await deleteMessages(vault, [assistantMessage.id]);
+        assistantPersisted = false;
+        await updateMessageStatus(
+          userMessage.id,
+          abortController.signal.aborted ? "cancelled" : "failed",
+        ).catch(() => undefined);
+        setMessages((current) =>
+          current
+            .filter((message) => message.id !== assistantMessage.id)
+            .map((message) =>
+              message.id === userMessage.id
+                ? {
+                    ...message,
+                    status: abortController.signal.aborted
+                      ? ("cancelled" as const)
+                      : ("failed" as const),
+                  }
+                : message,
+            ),
+        );
+        await safeTouchConversation(nextConversationId);
         return;
       }
-      setMessages((current) =>
-        current.map((message) =>
-          message.id === assistantMessage.id
-            ? {
-                ...message,
-                status: abortController.signal.aborted ? "cancelled" : "completed",
-                responseStats: stats,
-              }
-            : message,
-        ),
-      );
-      await touchConversation(nextConversationId);
+      // Skip touchConversation when afterTurnSaved handles the timestamp refresh.
+      if (!afterTurnSaved) await safeTouchConversation(nextConversationId);
     } catch (unknownError) {
       setError(
         unknownError instanceof Error
           ? unknownError.message
           : "Chat request failed.",
       );
+      if (!assistantContentPersisted) {
+        await updateMessageStatus(userMessage.id, "failed").catch(() => undefined);
+      }
+      if (assistantPersisted && !assistantContentPersisted) {
+        await deleteMessages(vault, [assistantMessage.id]).catch(() => undefined);
+      }
+      if (createdConversationId && !userPersisted) {
+        await deleteConversation(vault, createdConversationId).catch(() => undefined);
+        setConversations((current) =>
+          current.filter((conversation) => conversation.id !== createdConversationId),
+        );
+        setConversationId(null);
+        pushNewConversationRoute();
+      } else if (createdConversationId || conversationId) {
+        await safeTouchConversation(createdConversationId ?? conversationId!);
+      }
       setMessages((current) =>
-        current.filter((message) => message.id !== assistantMessage.id),
+        current
+          .filter((message) => message.id !== assistantMessage.id)
+          .map((message) =>
+            message.id === userMessage.id && !assistantContentPersisted
+              ? {
+                  ...message,
+                  status: "failed" as const,
+                }
+              : message,
+          ),
       );
     } finally {
       if (statsTimer !== undefined) window.clearInterval(statsTimer);
+      if (statsTimerRef.current === statsTimer) {
+        statsTimerRef.current = undefined;
+      }
       abortControllerRef.current = null;
-      setBusy(false);
+      releaseHeldBusyLock();
     }
   }
 
   async function deleteUserTurn(userMessage: ChatMessage) {
-    if (!conversationId || busy) return;
+    if (busyRef.current) return;
 
     const turnMessageIds = userTurnMessageIds(messages, userMessage.id);
     if (turnMessageIds.length === 0) return;
 
+    if (!conversationId) {
+      setMessages((current) =>
+        current.filter((message) => !turnMessageIds.includes(message.id)),
+      );
+      return;
+    }
+
     try {
       setError(null);
-      await deleteMessages(turnMessageIds);
+      await deleteMessages(vault, turnMessageIds);
       const nextMessages = messages.filter(
         (message) => !turnMessageIds.includes(message.id),
       );
@@ -811,11 +995,110 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     }
   }
 
+  async function shareConversationSnapshot() {
+    if (!conversationId || messages.length === 0 || busyRef.current) return;
+
+    try {
+      setError(null);
+      setNotice(null);
+      const shareMessages = await materializeMessagesForShare(messages);
+      const url = await createConversationShare({
+        conversationId,
+        messages: shareMessages,
+        title: activeConversationTitle,
+        vault,
+      });
+      await copyShareUrl(url);
+      setNotice("Conversation share link copied.");
+    } catch (unknownError) {
+      setError(
+        unknownError instanceof Error
+          ? unknownError.message
+          : "Unable to share conversation.",
+      );
+    }
+  }
+
+  async function shareMessageTurn(message: ChatMessage) {
+    if (!conversationId || busyRef.current) return;
+
+    const turn = messageTurnPair(messages, message.id);
+    if (!turn) {
+      setError("A message can only be shared after its paired response is available.");
+      return;
+    }
+
+    try {
+      setError(null);
+      setNotice(null);
+      const shareMessages = await materializeMessagesForShare([
+        turn.userMessage,
+        turn.assistantMessage,
+      ]);
+      const url = await createMessageTurnShare({
+        assistantMessageId: turn.assistantMessage.id,
+        conversationId,
+        messages: shareMessages,
+        title: textFromParts(turn.userMessage.parts).trim() || "Shared message",
+        userMessageId: turn.userMessage.id,
+        vault,
+      });
+      await copyShareUrl(url);
+      setNotice("Message share link copied.");
+    } catch (unknownError) {
+      setError(
+        unknownError instanceof Error
+          ? unknownError.message
+          : "Unable to share message.",
+      );
+    }
+  }
+
+  async function materializeMessagesForShare(shareMessages: ChatMessage[]) {
+    if (!conversationId) throw new Error("Conversation is not ready.");
+
+    return Promise.all(
+      shareMessages.map(async (message) => {
+        const attachmentEntries = await Promise.all(
+          attachmentIdsFromParts(message.parts).map(async (attachmentId) => {
+            const attachment = message.attachments?.[attachmentId];
+            if (!attachment) {
+              throw new Error("Message attachment metadata is missing.");
+            }
+
+            return [
+              attachmentId,
+              {
+                ...attachment,
+                dataUrl:
+                  attachment.dataUrl ??
+                  (await encryptedAttachmentToDataUrl(
+                    vault,
+                    conversationId,
+                    attachment,
+                  )),
+              },
+            ] as const;
+          }),
+        );
+
+        return {
+          ...message,
+          attachments:
+            attachmentEntries.length > 0
+              ? Object.fromEntries(attachmentEntries)
+              : undefined,
+        } satisfies ChatMessage;
+      }),
+    );
+  }
+
   async function retryUserTurn(userMessage: ChatMessage) {
-    if (!conversationId || busy) return;
+    if (busyRef.current) return;
 
     const turnMessageIds = userTurnMessageIds(messages, userMessage.id);
     if (turnMessageIds.length === 0) return;
+    const retryConversationId = conversationId;
 
     try {
       setError(null);
@@ -828,20 +1111,32 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
         return;
       }
 
-      const apiKey = providerKeys[turnProvider].apiKey.trim();
-      if (!apiKey) {
+      const providerKeyState = providerKeys[turnProvider];
+      if (!providerKeyState) {
         setSettingsOpen(true);
         setError(
-          `Configure and test a ${providerLabels[turnProvider]} API key first.`,
+          `Configure and test a ${formatProviderLabel(turnProvider)} API key first.`,
         );
         return;
       }
 
-      const retryAttachments = await reusableAttachmentsFromMessage(userMessage);
+      const apiKey = providerKeyState.apiKey.trim();
+      if (!apiKey) {
+        setSettingsOpen(true);
+        setError(
+          `Configure and test a ${formatProviderLabel(turnProvider)} API key first.`,
+        );
+        return;
+      }
+
+      if (!acquireBusyLock()) return;
+      const retryAttachments = await retryAttachmentsFromMessage(userMessage);
       if (
-        retryAttachments.length > 0 &&
+        (retryAttachments.reusedAttachments.length > 0 ||
+          retryAttachments.pendingAttachments.length > 0) &&
         !supportsAttachments(turnProvider, turnModel)
       ) {
+        releaseBusyLock();
         setError("The selected model is not configured for file or image input.");
         return;
       }
@@ -849,19 +1144,33 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
       const retryHistory = messages.filter(
         (message) => !turnMessageIds.includes(message.id),
       );
+      const reusedAttachmentIds = retryAttachments.reusedAttachments.map(
+        (attachment) => attachment.id,
+      );
       await sendUserTurn({
         parts: cloneMessageParts(userMessage.parts),
-        reusedAttachments: retryAttachments,
-        title: textFromMessage(userMessage) || "Retried message",
+        pendingAttachments: retryAttachments.pendingAttachments,
+        reusedAttachments: retryAttachments.reusedAttachments,
+        title: textFromParts(userMessage.parts).trim() || "Retried message",
         historyMessages: retryHistory,
         turnProvider,
         turnModel,
-        afterUserMessageSaved: async () => {
-          await deleteMessages(turnMessageIds);
-          await refreshConversationLastMessageAt(conversationId);
-        },
+        afterTurnSaved: retryConversationId
+          ? async (newUserMessage) => {
+              await reassignAttachmentsToMessage(
+                vault,
+                retryConversationId,
+                newUserMessage.id,
+                reusedAttachmentIds,
+              );
+              await deleteMessages(vault, turnMessageIds);
+              await refreshConversationLastMessageAt(retryConversationId);
+            }
+          : undefined,
+        busyLockAcquired: true,
       });
     } catch (unknownError) {
+      if (busyRef.current) releaseBusyLock();
       setError(
         unknownError instanceof Error
           ? unknownError.message
@@ -870,32 +1179,59 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     }
   }
 
-  async function reusableAttachmentsFromMessage(userMessage: ChatMessage) {
-    if (!conversationId) throw new Error("Conversation is not ready.");
-
+  async function retryAttachmentsFromMessage(userMessage: ChatMessage) {
     const attachmentParts = userMessage.parts.filter(
       (part): part is Extract<MessagePart, { type: "image" | "file" }> =>
         part.type === "image" || part.type === "file",
     );
 
-    return Promise.all(
+    const attachments = await Promise.all(
       attachmentParts.map(async (part) => {
         const attachment = userMessage.attachments?.[part.attachmentId];
         if (!attachment) throw new Error("Message attachment metadata is missing.");
 
-        const dataUrl =
-          attachment.dataUrl ??
-          (await encryptedAttachmentToDataUrl(
+        let dataUrl = attachment.dataUrl;
+        if (!dataUrl) {
+          if (!conversationId) throw new Error("Conversation is not ready.");
+          dataUrl = await encryptedAttachmentToDataUrl(
             vault,
             conversationId,
             attachment,
-          ));
+          );
+        }
+        if (!attachment.storagePath) {
+          return {
+            kind: "pending" as const,
+            attachment: {
+              id: attachment.id,
+              file: await dataUrlToFile(
+                dataUrl,
+                attachment.fileName,
+                attachment.mimeType,
+              ),
+              type: part.type,
+            } satisfies PendingAttachment,
+          };
+        }
+
         return {
-          ...attachment,
-          dataUrl,
-        } satisfies ChatAttachment;
+          kind: "reused" as const,
+          attachment: {
+            ...attachment,
+            dataUrl,
+          } satisfies ChatAttachment,
+        };
       }),
     );
+
+    return {
+      pendingAttachments: attachments.flatMap((entry) =>
+        entry.kind === "pending" ? [entry.attachment] : [],
+      ),
+      reusedAttachments: attachments.flatMap((entry) =>
+        entry.kind === "reused" ? [entry.attachment] : [],
+      ),
+    };
   }
 
   const scrollMessagesToEnd = useCallback(() => {
@@ -1021,8 +1357,19 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
         <header className="conversation-header">
           <strong>{activeConversationTitle}</strong>
           <div className="conversation-meta">
-            <span>{model ? model : "No model selected"}</span>
             <span>Context ≈{contextTokenEstimate.toLocaleString()} tokens</span>
+            <button
+              aria-label="Share conversation"
+              className="conversation-share-button"
+              disabled={busy || !conversationId || messages.length === 0}
+              onClick={() => {
+                void shareConversationSnapshot();
+              }}
+              title="Share conversation"
+              type="button"
+            >
+              <Share2 size={14} />
+            </button>
           </div>
         </header>
 
@@ -1067,41 +1414,68 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
                         />
                       ))}
                     </div>
-                  ) : (
+                  ) : message.status === "pending" || message.status === "streaming" ? (
                     <div className="thinking-indicator" aria-label="Thinking">
                       Thinking
                     </div>
-                  )
+                  ) : null
                 ) : (
-                  <div
-                    className={
-                      messageHasAttachmentsAndBody(message.parts)
-                        ? "message-content with-divider"
-                        : "message-content"
-                    }
-                  >
-                    {orderedMessageParts(message.parts).map((part, index) => (
-                      <MessagePartRenderer
-                        attachments={message.attachments}
-                        key={`${message.id}:${index}`}
-                        loadAttachmentPreview={loadAttachmentPreview}
-                        part={part}
-                      />
-                    ))}
+                  <div className="user-message-row">
+                    {message.status === "failed" ? (
+                      <div className="message-failure-icon" aria-label="Send failed">
+                        <CircleAlert size={15} />
+                      </div>
+                    ) : null}
+                    <div
+                      className={
+                        messageHasAttachmentsAndBody(message.parts)
+                          ? "message-content with-divider"
+                          : "message-content"
+                      }
+                    >
+                      {orderedMessageParts(message.parts).map((part, index) => (
+                        <MessagePartRenderer
+                          attachments={message.attachments}
+                          key={`${message.id}:${index}`}
+                          loadAttachmentPreview={loadAttachmentPreview}
+                          part={part}
+                        />
+                      ))}
+                    </div>
                   </div>
                 )}
                 {message.role === "user" ? (
                   <div className="message-actions">
                     <button
-                      aria-label="Retry message"
+                      aria-label="Share message and response"
+                      disabled={busy}
+                      onClick={() => {
+                        void shareMessageTurn(message);
+                      }}
+                      title="Share message and response"
+                      type="button"
+                    >
+                      <Share2 size={14} />
+                    </button>
+                    <button
+                      aria-label={
+                        message.status === "pending"
+                          ? "Sending message"
+                          : "Retry message"
+                      }
                       disabled={busy}
                       onClick={() => {
                         void retryUserTurn(message);
                       }}
-                      title="Retry"
+                      title={message.status === "pending" ? "Sending" : "Retry"}
                       type="button"
                     >
-                      <RotateCcw size={14} />
+                      <RotateCcw
+                        className={
+                          message.status === "pending" ? "spin" : undefined
+                        }
+                        size={14}
+                      />
                     </button>
                     <button
                       aria-label="Delete message"
@@ -1116,10 +1490,24 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
                     </button>
                   </div>
                 ) : null}
-                {message.role === "assistant" &&
-                message.responseStats ? (
-                  <div className="message-stats">
-                    {formatResponseStats(message.responseStats)}
+                {message.role === "assistant" ? (
+                  <div className="assistant-message-meta">
+                    <button
+                      aria-label="Share message and response"
+                      disabled={busy}
+                      onClick={() => {
+                        void shareMessageTurn(message);
+                      }}
+                      title="Share message and response"
+                      type="button"
+                    >
+                      <Share2 size={14} />
+                    </button>
+                    {message.responseStats ? (
+                      <div className="message-stats">
+                        {formatResponseStats(message.responseStats)}
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
               </article>
@@ -1128,6 +1516,7 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
         </div>
 
         {error ? <div className="notice danger">{error}</div> : null}
+        {notice ? <div className="notice success">{notice}</div> : null}
 
         <form className="composer" onSubmit={handleSubmit}>
           <div className="composer-box">
@@ -1388,6 +1777,139 @@ function bumpConversation(
   ];
 }
 
+async function safeTouchConversation(conversationId: string) {
+  await touchConversation(conversationId).catch(() => undefined);
+}
+
+async function settleInterruptedAssistantMessages(
+  vault: Pick<UnlockedVault, "userId">,
+  messages: ChatMessage[],
+  conversationId: string,
+) {
+  const emptyInterruptedAssistantIds = new Set<string>();
+  const renderableInterruptedAssistantIds = new Set<string>();
+  const completedUserIds = new Set<string>();
+  const failedUserIds = new Set<string>();
+
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (
+      message.role === "assistant" &&
+      (message.status === "pending" || message.status === "streaming")
+    ) {
+      if (messageHasRenderableParts(message)) {
+        renderableInterruptedAssistantIds.add(message.id);
+      } else {
+        emptyInterruptedAssistantIds.add(message.id);
+      }
+    }
+
+    if (
+      message.role === "user" &&
+      (message.status === "pending" || message.status === "completed")
+    ) {
+      const nextMessage = messages[index + 1];
+      if (nextMessage?.role === "assistant") {
+        const nextAssistantIsEmptyInterruption =
+          (nextMessage.status === "pending" || nextMessage.status === "streaming") &&
+          !messageHasRenderableParts(nextMessage);
+        if (message.status === "pending" && !nextAssistantIsEmptyInterruption) {
+          completedUserIds.add(message.id);
+        }
+      } else {
+        failedUserIds.add(message.id);
+      }
+      continue;
+    }
+
+    if (!emptyInterruptedAssistantIds.has(message.id)) continue;
+
+    const previousMessage = messages[index - 1];
+    if (previousMessage?.role === "user") {
+      failedUserIds.add(previousMessage.id);
+    }
+  }
+
+  if (
+    emptyInterruptedAssistantIds.size === 0 &&
+    renderableInterruptedAssistantIds.size === 0 &&
+    completedUserIds.size === 0 &&
+    failedUserIds.size === 0
+  ) {
+    return messages;
+  }
+
+  let nextMessages = messages;
+  let deletedEmptyAssistants = false;
+
+  if (emptyInterruptedAssistantIds.size > 0) {
+    try {
+      await deleteMessages(vault, [...emptyInterruptedAssistantIds]);
+      nextMessages = nextMessages.filter(
+        (message) => !emptyInterruptedAssistantIds.has(message.id),
+      );
+      deletedEmptyAssistants = true;
+    } catch {
+      // Delete failed for empty assistants; continue with remaining settlement
+      // so renderable assistants and failed users are still processed.
+    }
+  }
+
+  for (const messageId of renderableInterruptedAssistantIds) {
+    try {
+      await updateMessageStatus(messageId, "cancelled");
+      nextMessages = nextMessages.map((message) =>
+        message.id === messageId
+          ? {
+              ...message,
+              status: "cancelled" as const,
+            }
+          : message,
+      );
+    } catch {
+      // Keep local state aligned with DB; a future reload can retry settlement.
+    }
+  }
+
+  for (const messageId of completedUserIds) {
+    try {
+      await updateMessageStatus(messageId, "completed");
+      nextMessages = nextMessages.map((message) =>
+        message.id === messageId
+          ? {
+              ...message,
+              status: "completed" as const,
+            }
+          : message,
+      );
+    } catch {
+      // Keep local state aligned with DB; a future reload can retry settlement.
+    }
+  }
+
+  for (const messageId of failedUserIds) {
+    try {
+      await updateMessageStatus(messageId, "failed");
+      nextMessages = nextMessages.map((message) =>
+        message.id === messageId
+          ? {
+              ...message,
+              status: "failed" as const,
+            }
+          : message,
+      );
+    } catch {
+      // Keep local state aligned with DB; a future reload can retry settlement.
+    }
+  }
+
+  if (deletedEmptyAssistants) {
+    await refreshConversationLastMessageAt(conversationId).catch(() => undefined);
+  }
+
+  return nextMessages;
+}
+
 function appendTokenToMessageParts(parts: ChatMessage["parts"], token: string): MessagePart[] {
   const nextParts = [...parts];
   const lastPart = nextParts[nextParts.length - 1];
@@ -1447,18 +1969,61 @@ function userTurnMessageIds(messages: ChatMessage[], userMessageId: string) {
     : [userMessageId];
 }
 
-function cloneMessageParts(parts: MessagePart[]) {
-  return parts.map((part) => ({ ...part })) as MessagePart[];
+function messageTurnPair(messages: ChatMessage[], messageId: string) {
+  const index = messages.findIndex((message) => message.id === messageId);
+  if (index < 0) return null;
+
+  const message = messages[index];
+  if (message?.role === "user") {
+    const assistantMessage = messages[index + 1];
+    if (assistantMessage?.role !== "assistant") return null;
+    return {
+      userMessage: message,
+      assistantMessage,
+    };
+  }
+
+  if (message?.role === "assistant") {
+    const userMessage = messages[index - 1];
+    if (userMessage?.role !== "user") return null;
+    return {
+      userMessage,
+      assistantMessage: message,
+    };
+  }
+
+  return null;
 }
 
-function textFromMessage(message: ChatMessage) {
-  return message.parts
-    .flatMap((part) => {
-      if (part.type === "text" || part.type === "markdown") return [part.text];
-      return [];
-    })
-    .join("\n\n")
-    .trim();
+function attachmentIdsFromParts(parts: MessagePart[]) {
+  return [
+    ...new Set(
+      parts.flatMap((part) =>
+        part.type === "image" || part.type === "file" ? [part.attachmentId] : [],
+      ),
+    ),
+  ];
+}
+
+async function copyShareUrl(url: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(url);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = url;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
+}
+
+function cloneMessageParts(parts: MessagePart[]) {
+  return parts.map((part) => ({ ...part })) as MessagePart[];
 }
 
 function estimateContextTokens(
@@ -1548,6 +2113,30 @@ function fileToDataUrl(file: File) {
     reader.addEventListener("error", () => reject(reader.error));
     reader.readAsDataURL(file);
   });
+}
+
+function dataUrlToFile(dataUrl: string, fileName: string, mimeType: string) {
+  const separatorIndex = dataUrl.indexOf(",");
+  if (separatorIndex < 0) throw new Error("Invalid attachment data URL.");
+
+  const header = dataUrl.slice(0, separatorIndex);
+  const payload = dataUrl.slice(separatorIndex + 1);
+  const decoded = header.includes(";base64")
+    ? atob(payload)
+    : decodeURIComponent(payload);
+  const bytes = new Uint8Array(decoded.length);
+  for (let index = 0; index < decoded.length; index += 1) {
+    bytes[index] = decoded.charCodeAt(index);
+  }
+
+  return new File([bytes], fileName, {
+    type: mimeType || parseDataUrlMimeType(header) || "application/octet-stream",
+  });
+}
+
+function parseDataUrlMimeType(header: string) {
+  const match = /^data:([^;,]+)/.exec(header);
+  return match?.[1] ?? "";
 }
 
 function hiddenModelsStorageKey(userId: string, provider: ProviderId) {

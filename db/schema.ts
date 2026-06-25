@@ -252,6 +252,32 @@ export const attachments = pgTable(
   }),
 );
 
+export const attachmentStorageDeletions = pgTable(
+  "attachment_storage_deletions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => profiles.id, { onDelete: "cascade" }),
+    bucket: text("bucket").notNull(),
+    storagePath: text("storage_path").notNull(),
+    status: text("status").notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    createdAt,
+    updatedAt,
+  },
+  (table) => ({
+    userStatusIdx: index("attachment_storage_deletions_user_status_idx").on(
+      table.userId,
+      table.status,
+    ),
+    userStoragePathIdx: uniqueIndex(
+      "attachment_storage_deletions_user_storage_path_idx",
+    ).on(table.userId, table.bucket, table.storagePath),
+  }),
+);
+
 export const usageEvents = pgTable(
   "usage_events",
   {
@@ -296,12 +322,50 @@ export const sharedConversations = pgTable(
       .references(() => profiles.id, { onDelete: "cascade" }),
     shareTokenHash: text("share_token_hash").notNull(),
     visibility: shareVisibility("visibility").notNull().default("private"),
+    snapshotCiphertext: text("snapshot_ciphertext"),
+    snapshotNonce: text("snapshot_nonce"),
+    snapshotVersion: integer("snapshot_version").notNull().default(1),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     createdAt,
   },
   (table) => ({
     tokenIdx: uniqueIndex("shared_conversations_token_idx").on(
       table.shareTokenHash,
+    ),
+  }),
+);
+
+export const sharedMessageTurns = pgTable(
+  "shared_message_turns",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => profiles.id, { onDelete: "cascade" }),
+    userMessageId: uuid("user_message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    assistantMessageId: uuid("assistant_message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    shareTokenHash: text("share_token_hash").notNull(),
+    visibility: shareVisibility("visibility").notNull().default("link"),
+    snapshotCiphertext: text("snapshot_ciphertext").notNull(),
+    snapshotNonce: text("snapshot_nonce").notNull(),
+    snapshotVersion: integer("snapshot_version").notNull().default(1),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdAt,
+  },
+  (table) => ({
+    tokenIdx: uniqueIndex("shared_message_turns_token_idx").on(
+      table.shareTokenHash,
+    ),
+    userCreatedIdx: index("shared_message_turns_user_created_idx").on(
+      table.userId,
+      table.createdAt,
     ),
   }),
 );

@@ -108,6 +108,15 @@ function AttachmentPreview({
           <strong>{attachment?.fileName ?? "Encrypted attachment"}</strong>
           <span>{attachment?.mimeType ?? "application/octet-stream"}</span>
         </div>
+        {previewUrl ? (
+          <a
+            className="attachment-download"
+            download={attachment?.fileName ?? "attachment"}
+            href={previewUrl}
+          >
+            Download
+          </a>
+        ) : null}
       </div>
     );
   }

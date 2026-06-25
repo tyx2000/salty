@@ -1,6 +1,7 @@
 import type {
   ChatAttachment,
   ChatMessage,
+  MessageStatus,
   MessagePart,
   ProviderId,
   StoredAttachment,
@@ -17,11 +18,15 @@ import {
   encryptString,
   exportRawKey,
 } from "./crypto";
+import {
+  attachmentBucket,
+  flushPendingAttachmentStorageRemovals,
+  removeAttachmentStoragePaths,
+} from "./attachmentStorage";
 import { loadConversationKey } from "./conversations";
+import { normalizeAtomicDeleteRpcError } from "./supabaseRpcErrors";
 import { supabase } from "./supabase";
 import type { UnlockedVault } from "./vault";
-
-export const attachmentBucket = "encrypted-attachments";
 
 export type PendingAttachment = {
   id: string;
@@ -66,33 +71,57 @@ export async function loadMessages(vault: UnlockedVault, conversationId: string)
   if (messageRows.length === 0) return [];
 
   const messageIds = messageRows.map((message) => message.id);
-  const [{ data: partRows, error: partError }, { data: attachmentRows, error: attachmentError }] =
-    await Promise.all([
-      supabase
-        .from("message_parts")
-        .select("*")
-        .in("message_id", messageIds)
-        .order("order_index", { ascending: true })
-        .returns<StoredMessagePart[]>(),
-      supabase
-        .from("attachments")
-        .select("*")
-        .in("message_id", messageIds)
-        .returns<StoredAttachment[]>(),
-    ]);
+  const { data: partRows, error: partError } = await supabase
+    .from("message_parts")
+    .select("*")
+    .in("message_id", messageIds)
+    .order("order_index", { ascending: true })
+    .returns<StoredMessagePart[]>();
 
   if (partError) throw partError;
-  if (attachmentError) throw attachmentError;
 
   const partsByMessage = groupBy(partRows ?? [], "message_id");
-  const attachmentsByMessage = groupBy(attachmentRows ?? [], "message_id");
+  const decryptedPartsByMessage = new Map(
+    await Promise.all(
+      messageRows.map(async (row) => [
+        row.id,
+        await decryptParts(
+          vault,
+          conversationKey,
+          row.id,
+          partsByMessage.get(row.id) ?? [],
+        ),
+      ] as const),
+    ),
+  );
+  const referencedAttachmentIds = [
+    ...new Set(
+      [...decryptedPartsByMessage.values()].flatMap(attachmentIdsFromParts),
+    ),
+  ];
+  const attachmentRows = await loadAttachmentRows(messageIds, referencedAttachmentIds);
+  const attachmentsByMessage = groupBy(attachmentRows, "message_id");
+  const attachmentsById = new Map(attachmentRows.map((row) => [row.id, row]));
 
   return Promise.all(
     messageRows.map(async (row) => {
+      const parts = decryptedPartsByMessage.get(row.id) ?? [];
+      const attachmentRowsForMessage = [
+        ...(attachmentsByMessage.get(row.id) ?? []),
+        ...attachmentIdsFromParts(parts).flatMap((attachmentId) => {
+          const attachment = attachmentsById.get(attachmentId);
+          return attachment ? [attachment] : [];
+        }),
+      ];
       const attachments = await decryptAttachments(
         vault,
         conversationKey,
-        attachmentsByMessage.get(row.id) ?? [],
+        distinctAttachments(attachmentRowsForMessage),
+      );
+      const responseStats = await decryptMessageResponseStats(
+        vault,
+        conversationKey,
+        row,
       );
 
       return {
@@ -111,13 +140,9 @@ export async function loadMessages(vault: UnlockedVault, conversationId: string)
                 `${messageAad(vault.userId, row.id)}:model`,
               )
             : undefined,
-        parts: await decryptParts(
-          vault,
-          conversationKey,
-          row.id,
-          partsByMessage.get(row.id) ?? [],
-        ),
+        parts,
         attachments,
+        ...(responseStats ? { responseStats } : {}),
         createdAt: row.created_at,
       } satisfies ChatMessage;
     }),
@@ -132,7 +157,6 @@ export async function saveMessage(
   options: {
     model?: string;
     pendingAttachments?: PendingAttachment[];
-    existingAttachmentIds?: string[];
   } = {},
 ) {
   const conversationKey = await loadConversationKey(vault, conversationId);
@@ -143,7 +167,22 @@ export async function saveMessage(
         `${messageAad(vault.userId, message.id)}:model`,
       )
     : null;
+  const encryptedMetadata = message.responseStats
+    ? await encryptString(
+        conversationKey,
+        JSON.stringify({
+          responseStats: message.responseStats,
+        }),
+        `${messageAad(vault.userId, message.id)}:metadata`,
+      )
+    : null;
 
+  const partRows = await buildEncryptedPartRows(vault, conversationKey, message);
+
+  const uploadedPendingStoragePaths: string[] = [];
+
+  // Insert the message row first (FK constraint requires it), then parts.
+  // If part insert fails, delete the message row to avoid orphans.
   const { error: messageError } = await supabase.from("messages").insert({
     id: message.id,
     conversation_id: conversationId,
@@ -154,87 +193,201 @@ export async function saveMessage(
     provider,
     model_ciphertext: encryptedModel?.ciphertext ?? null,
     model_nonce: encryptedModel?.nonce ?? null,
+    encrypted_metadata: encryptedMetadata?.ciphertext ?? null,
+    encrypted_metadata_nonce: encryptedMetadata?.nonce ?? null,
     status: message.status,
   });
 
   if (messageError) throw messageError;
 
-  if (options.pendingAttachments?.length) {
-    await Promise.all(
-      options.pendingAttachments.map((attachment) =>
-        uploadEncryptedAttachment(
+  try {
+    for (const attachment of options.pendingAttachments ?? []) {
+      uploadedPendingStoragePaths.push(
+        await uploadEncryptedAttachment(
           vault,
           conversationKey,
           conversationId,
           message.id,
           attachment,
         ),
-      ),
+      );
+    }
+
+    if (partRows.length > 0) {
+      const { error: partError } = await supabase.from("message_parts").insert(partRows);
+      if (partError) throw partError;
+    }
+  } catch (saveError) {
+    try {
+      const { error: deleteError } = await supabase
+        .from("messages")
+        .delete()
+        .eq("id", message.id);
+      if (deleteError) throw deleteError;
+    } catch {
+      // Preserve the original save error; cleanup can be retried by normal deletion flows.
+    }
+    await removeAttachmentStoragePaths(vault.userId, uploadedPendingStoragePaths);
+    throw saveError;
+  }
+}
+
+async function loadAttachmentRows(
+  messageIds: string[],
+  attachmentIds: string[],
+) {
+  const attachmentQueries = [
+    supabase
+      .from("attachments")
+      .select("*")
+      .in("message_id", messageIds)
+      .returns<StoredAttachment[]>(),
+  ];
+
+  if (attachmentIds.length > 0) {
+    attachmentQueries.push(
+      supabase
+        .from("attachments")
+        .select("*")
+        .in("id", attachmentIds)
+        .returns<StoredAttachment[]>(),
     );
   }
 
-  if (options.existingAttachmentIds?.length) {
-    const { error: attachmentError } = await supabase
-      .from("attachments")
-      .update({
-        conversation_id: conversationId,
-        message_id: message.id,
-      })
-      .in("id", [...new Set(options.existingAttachmentIds)])
-      .eq("user_id", vault.userId);
+  const results = await Promise.all(attachmentQueries);
+  const attachmentError = results.find((result) => result.error)?.error;
+  if (attachmentError) throw attachmentError;
 
-    if (attachmentError) throw attachmentError;
-  }
+  return distinctAttachments(results.flatMap((result) => result.data ?? []));
+}
 
-  const partRows = await Promise.all(
-    message.parts.map(async (part, index) => {
-      const encrypted = await encryptPart(vault, conversationKey, message.id, part, index);
-      return {
-        id: crypto.randomUUID(),
-        message_id: message.id,
-        type: part.type,
-        order_index: index,
-        content_ciphertext: encrypted.content?.ciphertext ?? null,
-        content_nonce: encrypted.content?.nonce ?? null,
-        data_ciphertext: encrypted.data?.ciphertext ?? null,
-        data_nonce: encrypted.data?.nonce ?? null,
-      };
-    }),
+function attachmentIdsFromParts(parts: MessagePart[]) {
+  return parts.flatMap((part) =>
+    part.type === "image" || part.type === "file" ? [part.attachmentId] : [],
   );
+}
 
+function distinctAttachments(rows: StoredAttachment[]) {
+  return [...new Map(rows.map((row) => [row.id, row])).values()];
+}
+
+export async function reassignAttachmentsToMessage(
+  vault: UnlockedVault,
+  conversationId: string,
+  messageId: string,
+  attachmentIds: string[],
+) {
+  const uniqueAttachmentIds = [...new Set(attachmentIds)];
+  if (uniqueAttachmentIds.length === 0) return;
+
+  const { error } = await supabase
+    .from("attachments")
+    .update({
+      conversation_id: conversationId,
+      message_id: messageId,
+    })
+    .in("id", uniqueAttachmentIds)
+    .eq("user_id", vault.userId);
+
+  if (error) throw error;
+}
+
+export async function updateMessageStatus(
+  messageId: string,
+  status: MessageStatus,
+) {
+  const { error } = await supabase
+    .from("messages")
+    .update({
+      status,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", messageId);
+
+  if (error) throw error;
+}
+
+export async function updateMessageContent(
+  vault: UnlockedVault,
+  message: ChatMessage,
+  conversationId: string,
+  provider: ProviderId,
+  options: {
+    model?: string;
+  } = {},
+) {
+  const conversationKey = await loadConversationKey(vault, conversationId);
+  const encryptedModel = options.model
+    ? await encryptString(
+        conversationKey,
+        options.model,
+        `${messageAad(vault.userId, message.id)}:model`,
+      )
+    : null;
+  const encryptedMetadata = message.responseStats
+    ? await encryptString(
+        conversationKey,
+        JSON.stringify({
+          responseStats: message.responseStats,
+        }),
+        `${messageAad(vault.userId, message.id)}:metadata`,
+      )
+    : null;
+
+  const partRows = await buildEncryptedPartRows(vault, conversationKey, message);
+
+  // Insert new parts first — if this fails, old parts are preserved.
   if (partRows.length > 0) {
     const { error: partError } = await supabase.from("message_parts").insert(partRows);
     if (partError) throw partError;
   }
+
+  // Commit the message row update before deleting old parts so a crash
+  // after this point leaves the message "completed" with renderable content.
+  const { error: messageError } = await supabase
+    .from("messages")
+    .update({
+      provider,
+      model_ciphertext: encryptedModel?.ciphertext ?? null,
+      model_nonce: encryptedModel?.nonce ?? null,
+      encrypted_metadata: encryptedMetadata?.ciphertext ?? null,
+      encrypted_metadata_nonce: encryptedMetadata?.nonce ?? null,
+      status: message.status,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", message.id)
+    .eq("conversation_id", conversationId)
+    .eq("user_id", vault.userId);
+
+  if (messageError) throw messageError;
+
+  // Clean up placeholder parts only after the message row is committed.
+  const newPartIds = partRows.map((row) => row.id);
+  if (newPartIds.length > 0) {
+    const { error: cleanupError } = await supabase
+      .from("message_parts")
+      .delete()
+      .not("id", "in", `(${newPartIds.join(",")})`)
+      .eq("message_id", message.id);
+    return { cleanupFailed: Boolean(cleanupError) };
+  }
+
+  return { cleanupFailed: false };
 }
 
-export async function deleteMessages(messageIds: string[]) {
+export async function deleteMessages(
+  vault: Pick<UnlockedVault, "userId">,
+  messageIds: string[],
+) {
   const uniqueMessageIds = [...new Set(messageIds)];
   if (uniqueMessageIds.length === 0) return;
 
-  const { data: attachmentRows, error: attachmentError } = await supabase
-    .from("attachments")
-    .select("storage_path")
-    .in("message_id", uniqueMessageIds)
-    .returns<Array<{ storage_path: string }>>();
+  const { error } = await supabase.rpc("delete_messages_atomic", {
+    p_message_ids: uniqueMessageIds,
+  });
+  if (error) throw normalizeAtomicDeleteRpcError(error, "delete messages");
 
-  if (attachmentError) throw attachmentError;
-
-  const storagePaths = [
-    ...new Set((attachmentRows ?? []).map((row) => row.storage_path)),
-  ];
-  if (storagePaths.length > 0) {
-    const { error: storageError } = await supabase.storage
-      .from(attachmentBucket)
-      .remove(storagePaths);
-    if (storageError) throw storageError;
-  }
-
-  const { error } = await supabase
-    .from("messages")
-    .delete()
-    .in("id", uniqueMessageIds);
-  if (error) throw error;
+  await flushPendingAttachmentStorageRemovals(vault.userId);
 }
 
 export async function encryptedAttachmentToDataUrl(
@@ -299,7 +452,7 @@ async function uploadEncryptedAttachment(
   conversationId: string,
   messageId: string,
   attachment: PendingAttachment,
-) {
+): Promise<string> {
   const fileKey = await createAesKey();
   const fileBytes = await attachment.file.arrayBuffer();
   const encryptedFile = await encryptBytes(
@@ -342,23 +495,52 @@ async function uploadEncryptedAttachment(
     ),
   ]);
 
-  const { error: attachmentError } = await supabase.from("attachments").insert({
-    id: attachment.id,
-    user_id: vault.userId,
-    conversation_id: conversationId,
-    message_id: messageId,
-    bucket: attachmentBucket,
-    storage_path: storagePath,
-    file_name_ciphertext: encryptedFileName.ciphertext,
-    file_name_nonce: encryptedFileName.nonce,
-    mime_type_ciphertext: encryptedMimeType.ciphertext,
-    mime_type_nonce: encryptedMimeType.nonce,
-    size_bytes: attachment.file.size,
-    content_key_ciphertext: encryptedFileKey.ciphertext,
-    content_key_nonce: encryptedFileKey.nonce,
-  });
+  const { error: attachmentError } = await supabase
+    .from("attachments")
+    .insert({
+      id: attachment.id,
+      user_id: vault.userId,
+      conversation_id: conversationId,
+      message_id: messageId,
+      bucket: attachmentBucket,
+      storage_path: storagePath,
+      file_name_ciphertext: encryptedFileName.ciphertext,
+      file_name_nonce: encryptedFileName.nonce,
+      mime_type_ciphertext: encryptedMimeType.ciphertext,
+      mime_type_nonce: encryptedMimeType.nonce,
+      size_bytes: attachment.file.size,
+      content_key_ciphertext: encryptedFileKey.ciphertext,
+      content_key_nonce: encryptedFileKey.nonce,
+    });
 
-  if (attachmentError) throw attachmentError;
+  if (attachmentError) {
+    await removeAttachmentStoragePaths(vault.userId, [storagePath]);
+    throw attachmentError;
+  }
+
+  return storagePath;
+}
+
+async function buildEncryptedPartRows(
+  vault: UnlockedVault,
+  conversationKey: CryptoKey,
+  message: ChatMessage,
+) {
+  return Promise.all(
+    message.parts.map(async (part, index) => {
+      const encrypted = await encryptPart(vault, conversationKey, message.id, part, index);
+      return {
+        id: crypto.randomUUID(),
+        message_id: message.id,
+        type: part.type,
+        order_index: index,
+        content_ciphertext: encrypted.content?.ciphertext ?? null,
+        content_nonce: encrypted.content?.nonce ?? null,
+        data_ciphertext: encrypted.data?.ciphertext ?? null,
+        data_nonce: encrypted.data?.nonce ?? null,
+      };
+    }),
+  );
 }
 
 async function encryptPart(
@@ -466,6 +648,62 @@ async function decryptAttachments(
   );
 
   return Object.fromEntries(entries);
+}
+
+async function decryptMessageResponseStats(
+  vault: UnlockedVault,
+  conversationKey: CryptoKey,
+  row: StoredMessage,
+) {
+  if (!row.encrypted_metadata || !row.encrypted_metadata_nonce) return undefined;
+
+  try {
+    const metadata = JSON.parse(
+      await decryptString(
+        conversationKey,
+        {
+          ciphertext: row.encrypted_metadata,
+          nonce: row.encrypted_metadata_nonce,
+        },
+        `${messageAad(vault.userId, row.id)}:metadata`,
+      ),
+    ) as { responseStats?: unknown };
+    return normalizeResponseStats(metadata.responseStats);
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeResponseStats(value: unknown) {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const elapsedMs = numberValue(record.elapsedMs);
+  if (elapsedMs === undefined) return undefined;
+
+  const usageValue = record.usage;
+  const usage =
+    usageValue && typeof usageValue === "object"
+      ? {
+          promptTokens: numberValue(
+            (usageValue as Record<string, unknown>).promptTokens,
+          ),
+          completionTokens: numberValue(
+            (usageValue as Record<string, unknown>).completionTokens,
+          ),
+          totalTokens: numberValue(
+            (usageValue as Record<string, unknown>).totalTokens,
+          ),
+        }
+      : undefined;
+
+  return {
+    elapsedMs,
+    ...(usage ? { usage } : {}),
+  };
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function normalizeStatus(status: string): ChatMessage["status"] {
