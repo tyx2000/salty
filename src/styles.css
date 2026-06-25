@@ -395,7 +395,7 @@ textarea {
 .conversation-row {
   border-radius: 8px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 40px;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   overflow: hidden;
   position: relative;
@@ -405,17 +405,13 @@ textarea {
   width: 100%;
 }
 
-.conversation-select,
-.conversation-delete {
+.conversation-select {
   background: transparent;
   border: 0;
   color: #273244;
-  min-width: 0;
-}
-
-.conversation-select {
   justify-content: flex-start;
   min-height: 32px;
+  min-width: 0;
   padding: 0 9px;
 }
 
@@ -426,29 +422,81 @@ textarea {
   white-space: nowrap;
 }
 
-.conversation-delete {
-  color: #9f1239;
-  filter: blur(4px);
-  opacity: 0;
-  padding: 0;
-  pointer-events: none;
-  scale: 0.25;
-  transition-duration: 160ms;
-  transition-property: filter, opacity, scale;
-  transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
-}
-
 .conversation-row.active,
 .conversation-row:hover {
   background: #eceae5;
 }
 
-.conversation-row:hover .conversation-delete,
-.conversation-delete:focus-visible {
-  filter: blur(0);
+.conversation-row:focus-visible {
+  outline: 2px solid #4f6bff;
+  outline-offset: -2px;
+}
+
+.conversation-rename-input {
+  background: #ffffff;
+  border: 1px solid #4f6bff;
+  border-radius: 6px;
+  box-shadow: 0 0 0 3px rgba(79, 107, 255, 0.12);
+  color: #18202f;
+  font-size: 13px;
+  margin: 4px 6px;
+  min-width: 0;
+  outline: none;
+  padding: 6px 8px;
+}
+
+.context-menu {
+  background: #ffffff;
+  border: 0;
+  border-radius: 14px;
+  box-shadow: var(--shadow-elevated);
+  display: grid;
+  gap: 2px;
+  min-width: 160px;
+  opacity: 0;
+  padding: 6px;
+  pointer-events: none;
+  transform: translateY(8px);
+  transition:
+    opacity 140ms ease,
+    transform 140ms ease,
+    visibility 140ms ease;
+  visibility: hidden;
+  z-index: 14;
+}
+
+.context-menu.open {
   opacity: 1;
   pointer-events: auto;
-  scale: 1;
+  transform: translateY(0);
+  visibility: visible;
+}
+
+.context-menu-item {
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: #273244;
+  display: flex;
+  font-size: 13px;
+  gap: 10px;
+  justify-content: flex-start;
+  min-height: 32px;
+  padding: 0 8px;
+  text-align: left;
+  width: 100%;
+}
+
+.context-menu-item:hover {
+  background: #f1f0eb;
+}
+
+.context-menu-item.danger {
+  color: #9f1239;
+}
+
+.context-menu-item.danger:hover {
+  background: #fef2f2;
 }
 
 .sidebar-actions {

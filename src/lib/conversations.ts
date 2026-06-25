@@ -90,6 +90,26 @@ export async function createConversation(
   return id;
 }
 
+export async function updateConversationTitle(
+  vault: UnlockedVault,
+  conversationId: string,
+  title: string,
+) {
+  const aad = conversationAad(vault.userId, conversationId);
+  const encryptedTitle = await encryptString(vault.masterKey, title, aad);
+
+  const { error } = await supabase
+    .from("conversations")
+    .update({
+      title_ciphertext: encryptedTitle.ciphertext,
+      title_nonce: encryptedTitle.nonce,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", conversationId);
+
+  if (error) throw error;
+}
+
 export async function deleteConversation(
   vault: Pick<UnlockedVault, "userId">,
   conversationId: string,

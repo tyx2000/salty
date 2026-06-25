@@ -19,6 +19,7 @@ import {
   List,
   PanelLeftClose,
   PanelLeftOpen,
+  PenLine,
   Plus,
   RotateCcw,
   Send,
@@ -45,6 +46,7 @@ import {
   loadConversations,
   refreshConversationLastMessageAt,
   touchConversation,
+  updateConversationTitle,
   type ConversationListItem,
 } from "@/lib/conversations";
 import {
@@ -70,6 +72,8 @@ import {
   createMessageTurnShare,
 } from "@/lib/shares";
 import type { UnlockedVault } from "@/lib/vault";
+import { useClickOutside } from "@/hooks/useClickOutside";
+import { ContextMenu } from "./ContextMenu";
 import { ConversationList } from "./ConversationList";
 import { MessagePartRenderer } from "./MessagePartRenderer";
 import { SettingsModal } from "./SettingsModal";
@@ -148,6 +152,14 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     useState<Record<ProviderId, ProviderKeyState>>(emptyProviderKeyState);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
+  const [contextMenu, setContextMenu] = useState<{
+    conversation: ConversationListItem;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [editingConversationId, setEditingConversationId] = useState<
+    string | null
+  >(null);
   const [pendingDelete, setPendingDelete] =
     useState<ConversationListItem | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -255,61 +267,29 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     return () => window.removeEventListener("popstate", handlePopState);
   }, [vault]);
 
-  useEffect(() => {
-    if (!settingsPopoverOpen) return;
+  useClickOutside({
+    open: settingsPopoverOpen,
+    ref: settingsMenuRef,
+    onClose: () => setSettingsPopoverOpen(false),
+  });
 
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (settingsMenuRef.current?.contains(target)) return;
-      setSettingsPopoverOpen(false);
-    }
+  useClickOutside({
+    open: mobileConversationsOpen,
+    ref: mobileConversationsRef,
+    onClose: () => setMobileConversationsOpen(false),
+  });
 
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [settingsPopoverOpen]);
+  useClickOutside({
+    open: modelMenuOpen,
+    ref: modelMenuRef,
+    onClose: () => setModelMenuOpen(false),
+  });
 
-  useEffect(() => {
-    if (!mobileConversationsOpen) return;
-
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (mobileConversationsRef.current?.contains(target)) return;
-      setMobileConversationsOpen(false);
-    }
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [mobileConversationsOpen]);
-
-  useEffect(() => {
-    if (!modelMenuOpen) return;
-
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (modelMenuRef.current?.contains(target)) return;
-      setModelMenuOpen(false);
-    }
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [modelMenuOpen]);
-
-  useEffect(() => {
-    if (!reasoningMenuOpen) return;
-
-    function handlePointerDown(event: PointerEvent) {
-      const target = event.target;
-      if (!(target instanceof Node)) return;
-      if (reasoningMenuRef.current?.contains(target)) return;
-      setReasoningMenuOpen(false);
-    }
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [reasoningMenuOpen]);
+  useClickOutside({
+    open: reasoningMenuOpen,
+    ref: reasoningMenuRef,
+    onClose: () => setReasoningMenuOpen(false),
+  });
 
   useEffect(() => {
     return () => {
@@ -465,6 +445,7 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     setConversationId(null);
     setMessages([]);
     setError(null);
+    setEditingConversationId(null);
   }
 
   async function openConversation(nextConversationId: string, updateRoute = true) {
@@ -472,6 +453,7 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     setConversationId(nextConversationId);
     setLoadingMessages(true);
     setError(null);
+    setEditingConversationId(null);
     autoScrollRef.current = true;
 
     try {
@@ -553,7 +535,57 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
       setError(null);
     }
 
+    if (editingConversationId === pendingDelete.id) {
+      setEditingConversationId(null);
+    }
+
     setPendingDelete(null);
+  }
+
+  function handleConversationContextMenu(
+    conversation: ConversationListItem,
+    x: number,
+    y: number,
+  ) {
+    setContextMenu({ conversation, x, y });
+  }
+
+  function handleContextMenuEdit() {
+    if (!contextMenu) return;
+    setEditingConversationId(contextMenu.conversation.id);
+    setContextMenu(null);
+  }
+
+  function handleContextMenuDelete() {
+    if (!contextMenu) return;
+    setPendingDelete(contextMenu.conversation);
+    setContextMenu(null);
+  }
+
+  async function handleRenameSubmit(
+    conversationId: string,
+    title: string,
+  ) {
+    setEditingConversationId(null);
+    const trimmed = title.trim();
+    if (!trimmed) return;
+
+    try {
+      await updateConversationTitle(vault, conversationId, trimmed);
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation.id === conversationId
+            ? { ...conversation, title: trimmed, updatedAt: new Date().toISOString() }
+            : conversation,
+        ),
+      );
+    } catch (unknownError) {
+      setError(
+        unknownError instanceof Error
+          ? unknownError.message
+          : "Unable to rename conversation.",
+      );
+    }
   }
 
   async function handleSubmit(event: FormEvent) {
@@ -1290,10 +1322,12 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
               <ConversationList
                 activeConversationId={conversationId}
                 conversations={conversations}
-                onDeleteConversation={setPendingDelete}
+                editingConversationId={editingConversationId}
+                onContextMenu={handleConversationContextMenu}
                 onOpenConversation={(nextConversationId) => {
                   void openConversation(nextConversationId);
                 }}
+                onRenameSubmit={handleRenameSubmit}
                 variant="sidebar"
               />
             )}
@@ -1357,7 +1391,7 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
         <header className="conversation-header">
           <strong>{activeConversationTitle}</strong>
           <div className="conversation-meta">
-            <span>Context ≈{contextTokenEstimate.toLocaleString()} tokens</span>
+            <span>~{contextTokenEstimate.toLocaleString()} tokens</span>
             <button
               aria-label="Share conversation"
               className="conversation-share-button"
@@ -1717,6 +1751,32 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
         onClose={() => setSettingsOpen(false)}
         onProviderKeyChange={updateProviderKey}
       />
+
+      <ContextMenu
+        open={contextMenu !== null}
+        x={contextMenu?.x ?? 0}
+        y={contextMenu?.y ?? 0}
+        onClose={() => setContextMenu(null)}
+      >
+        <button
+          className="context-menu-item"
+          onClick={handleContextMenuEdit}
+          role="menuitem"
+          type="button"
+        >
+          <PenLine size={14} />
+          <span>Rename</span>
+        </button>
+        <button
+          className="context-menu-item danger"
+          onClick={handleContextMenuDelete}
+          role="menuitem"
+          type="button"
+        >
+          <Trash2 size={14} />
+          <span>Delete</span>
+        </button>
+      </ContextMenu>
 
       {pendingDelete ? (
         <div className="modal-backdrop" role="presentation">
