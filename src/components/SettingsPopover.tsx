@@ -1,26 +1,29 @@
 import type { RefObject } from "react";
 import type { User } from "@supabase/supabase-js";
-import { LogOut, Settings, SlidersHorizontal } from "lucide-react";
+import { Link } from "react-router";
+import { Bot, Gauge, LogOut, Settings, UserRound } from "lucide-react";
 
 type SettingsPopoverProps = {
   menuRef: RefObject<HTMLDivElement | null>;
-  onConfigureProviders: () => void;
   onLogout: () => void;
   onOpenChange: (open: boolean) => void;
   open: boolean;
+  returnTo: string;
   sidebarCollapsed: boolean;
   user: User;
 };
 
 export function SettingsPopover({
   menuRef,
-  onConfigureProviders,
   onLogout,
   onOpenChange,
   open,
+  returnTo,
   sidebarCollapsed,
   user,
 }: SettingsPopoverProps) {
+  const settingsLinkState = { returnTo };
+
   return (
     <div className="settings-menu" ref={menuRef}>
       <button
@@ -30,8 +33,8 @@ export function SettingsPopover({
         aria-label="Settings"
         aria-expanded={open}
       >
-        <Settings size={16} />
-        {!sidebarCollapsed ? "Settings" : null}
+        <UserRound size={16} />
+        {!sidebarCollapsed ? <span>{user.email}</span> : null}
       </button>
       <div
         className={open ? "settings-popover open" : "settings-popover"}
@@ -41,14 +44,42 @@ export function SettingsPopover({
           <strong>{user.email}</strong>
           <code>{user.id}</code>
         </div>
-        <button
+        <Link
           className="popover-action"
-          onClick={onConfigureProviders}
-          type="button"
+          onClick={() => onOpenChange(false)}
+          state={settingsLinkState}
+          to="/settings"
         >
-          <SlidersHorizontal size={15} />
-          Configure providers
-        </button>
+          <UserRound size={15} />
+          Profile
+        </Link>
+        <Link
+          className="popover-action"
+          onClick={() => onOpenChange(false)}
+          state={settingsLinkState}
+          to="/settings/usage"
+        >
+          <Gauge size={15} />
+          Usage
+        </Link>
+        <Link
+          className="popover-action"
+          onClick={() => onOpenChange(false)}
+          state={settingsLinkState}
+          to="/settings/provider"
+        >
+          <Bot size={15} />
+          Provider
+        </Link>
+        <Link
+          className="popover-action"
+          onClick={() => onOpenChange(false)}
+          state={settingsLinkState}
+          to="/settings/general"
+        >
+          <Settings size={15} />
+          Settings
+        </Link>
         <button className="popover-action" onClick={onLogout} type="button">
           <LogOut size={15} />
           Sign out

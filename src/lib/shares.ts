@@ -17,15 +17,6 @@ type ShareRecord = {
   snapshot_nonce: string | null;
 };
 
-export function parseShareRoute(pathname: string) {
-  const match = /^\/share\/(conversation|turn)\/([^/]+)$/.exec(pathname);
-  if (!match) return null;
-  return {
-    kind: match[1] as ShareKind,
-    token: decodeURIComponent(match[2]),
-  };
-}
-
 export async function createConversationShare({
   conversationId,
   messages,

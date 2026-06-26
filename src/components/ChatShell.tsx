@@ -1,6 +1,5 @@
 import {
   FormEvent,
-  KeyboardEvent,
   UIEvent,
   useCallback,
   useEffect,
@@ -9,23 +8,10 @@ import {
   useState,
 } from "react";
 import type { User } from "@supabase/supabase-js";
+import { useLocation, useNavigate } from "react-router";
 import {
-  CircleAlert,
-  Brain,
-  Check,
-  ChevronDown,
-  Gauge,
-  Paperclip,
-  List,
-  PanelLeftClose,
-  PanelLeftOpen,
   PenLine,
-  Plus,
-  RotateCcw,
-  Send,
-  ShieldCheck,
   Share2,
-  Square,
   Trash2,
   X,
 } from "lucide-react";
@@ -35,18 +21,11 @@ import type {
   ChatResponseStats,
   MessagePart,
   ProviderId,
-  ProviderKeyState,
-  ProviderModel,
   ReasoningEffort,
-  ThinkingMode,
 } from "@/types/domain";
 import {
   createConversation,
-  deleteConversation,
-  loadConversations,
   refreshConversationLastMessageAt,
-  touchConversation,
-  updateConversationTitle,
   type ConversationListItem,
 } from "@/lib/conversations";
 import {
@@ -59,34 +38,45 @@ import {
   updateMessageStatus,
 } from "@/lib/messages";
 import type { PendingAttachment } from "@/lib/messages";
-import { flushPendingAttachmentStorageRemovals } from "@/lib/attachmentStorage";
-import { streamChat, testProviderKey, textFromParts } from "@/lib/chatApi";
+import { streamChat, textFromParts } from "@/lib/chatApi";
+import {
+  cloneMessageParts,
+  userTurnMessageIds,
+} from "@/lib/chatMessageUtils";
+import { routeConversationIdFromPath } from "@/lib/chatRoutes";
+import { createAssistantStreamState } from "@/lib/assistantStreamState";
+import { createChatTurnDraft } from "@/lib/chatTurnDraft";
+import {
+  bumpConversation,
+  upsertConversation,
+} from "@/lib/conversationListUtils";
+import { createUsageEventRecorder } from "@/lib/chatUsageRecorder";
 import { env } from "@/lib/env";
-import { enrichProviderModel, supportsAttachments } from "@/lib/modelCapabilities";
+import { handleEmptyAssistantResponse } from "@/lib/emptyAssistantResponse";
 import {
-  emptyProviderKeyState,
-  loadEncryptedProviderKeys,
-} from "@/lib/providerKeys";
+  retryAttachmentsFromMessage,
+} from "@/lib/messageAttachmentMaterialization";
 import {
-  createConversationShare,
-  createMessageTurnShare,
-} from "@/lib/shares";
+  safeTouchConversation,
+  settleInterruptedAssistantMessages,
+} from "@/lib/messageSettlement";
+import {
+  resolveProviderApiKey,
+  validateTurnAttachments,
+} from "@/lib/providerValidation";
+import { rollbackFailedTurn } from "@/lib/turnRollback";
 import type { UnlockedVault } from "@/lib/vault";
+import { useBusyLock } from "@/hooks/useBusyLock";
+import { useComposerControls } from "@/hooks/useComposerControls";
+import { useConversationCatalog } from "@/hooks/useConversationCatalog";
 import { useClickOutside } from "@/hooks/useClickOutside";
+import { useMessageDeletion } from "@/hooks/useMessageDeletion";
+import { useMessageSharing } from "@/hooks/useMessageSharing";
+import { useProviderModels } from "@/hooks/useProviderModels";
+import { ChatSidebar } from "./chat/ChatSidebar";
+import { Composer } from "./chat/Composer";
+import { MessageTimeline } from "./chat/MessageTimeline";
 import { ContextMenu } from "./ContextMenu";
-import { ConversationList } from "./ConversationList";
-import { MessagePartRenderer } from "./MessagePartRenderer";
-import { SettingsModal } from "./SettingsModal";
-import { SettingsPopover } from "./SettingsPopover";
-
-const providerLabels: Record<ProviderId, string> = {
-  openai: "OpenAI",
-  deepseek: "DeepSeek",
-};
-
-function formatProviderLabel(providerId: ProviderId) {
-  return providerLabels[providerId] ?? providerId;
-}
 
 const reasoningEffortOptions: Array<{ value: ReasoningEffort; label: string }> = [
   { value: "default", label: "Default" },
@@ -96,118 +86,148 @@ const reasoningEffortOptions: Array<{ value: ReasoningEffort; label: string }> =
   { value: "high", label: "High" },
 ];
 
-type AvailableModel = {
-  provider: ProviderId;
-  model: ProviderModel;
-};
-
 type ChatShellProps = {
   user: User;
   vault: UnlockedVault;
   onLogout: () => void;
 };
 
-const chatRoutePrefix = "/chat/";
-
-function getRouteConversationId() {
-  if (typeof window === "undefined") return null;
-
-  const path = window.location.pathname;
-  if (!path.startsWith(chatRoutePrefix)) return null;
-
-  const routeValue = path.slice(chatRoutePrefix.length).split("/")[0];
-  return routeValue ? decodeURIComponent(routeValue) : null;
-}
-
-function pushConversationRoute(conversationId: string) {
-  if (typeof window === "undefined") return;
-
-  const nextPath = `${chatRoutePrefix}${encodeURIComponent(conversationId)}`;
-  if (window.location.pathname !== nextPath) {
-    window.history.pushState({}, "", nextPath);
-  }
-}
-
-function pushNewConversationRoute() {
-  if (typeof window === "undefined") return;
-
-  if (window.location.pathname !== "/") {
-    window.history.pushState({}, "", "/");
-  }
-}
-
 export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const routeConversationId = routeConversationIdFromPath(location.pathname);
+  const isSettingsRoute = /^\/settings(?:\/|$)/.test(location.pathname);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPopoverOpen, setSettingsPopoverOpen] = useState(false);
   const [mobileConversationsOpen, setMobileConversationsOpen] = useState(false);
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  const [reasoningMenuOpen, setReasoningMenuOpen] = useState(false);
-  const [provider, setProvider] = useState<ProviderId>("openai");
-  const [model, setModel] = useState("");
-  const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("disabled");
-  const [reasoningEffort, setReasoningEffort] =
-    useState<ReasoningEffort>("default");
-  const [providerKeys, setProviderKeys] =
-    useState<Record<ProviderId, ProviderKeyState>>(emptyProviderKeyState);
   const [conversationId, setConversationId] = useState<string | null>(null);
-  const [conversations, setConversations] = useState<ConversationListItem[]>([]);
-  const [contextMenu, setContextMenu] = useState<{
-    conversation: ConversationListItem;
-    x: number;
-    y: number;
-  } | null>(null);
-  const [editingConversationId, setEditingConversationId] = useState<
-    string | null
-  >(null);
-  const [pendingDelete, setPendingDelete] =
-    useState<ConversationListItem | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [draft, setDraft] = useState("");
-  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [loadingConversations, setLoadingConversations] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   const mobileConversationsRef = useRef<HTMLDivElement | null>(null);
-  const modelMenuRef = useRef<HTMLDivElement | null>(null);
-  const reasoningMenuRef = useRef<HTMLDivElement | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const autoScrollRef = useRef(true);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const busyRef = useRef(false);
+  const openingConversationRef = useRef<string | null>(null);
   const statsTimerRef = useRef<number | undefined>(undefined);
+  const {
+    closeModelMenu,
+    draft,
+    fileInputRef,
+    handleAddPendingFiles,
+    handleDraftKeyDown,
+    handleReasoningEffortChange,
+    handleRemovePendingFile,
+    modelMenuOpen,
+    modelMenuRef,
+    pendingFiles,
+    reasoningEffort,
+    reasoningMenuOpen,
+    reasoningMenuRef,
+    setDraft,
+    setPendingFiles,
+    thinkingMode,
+    toggleModelMenu,
+    toggleReasoningMenu,
+    toggleThinkingMode,
+  } = useComposerControls();
+  const {
+    acquireBusyLock,
+    busy,
+    busyRef,
+    clearBusyLock,
+    releaseBusyLock,
+  } = useBusyLock();
 
-  const availableModels = useMemo<AvailableModel[]>(() => {
-    return (["openai", "deepseek"] as ProviderId[]).flatMap((providerId) =>
-      providerKeys[providerId].models
-        .filter(
-          (availableModel) =>
-            !providerKeys[providerId].hiddenModelIds.includes(availableModel.id),
-        )
-        .map((availableModel) => ({
-          provider: providerId,
-          model: availableModel,
-        })),
-    );
-  }, [providerKeys]);
-
-  const selectedModelValue = model ? `${provider}:${model}` : "";
-  const selectedModelLabel = model || "Test an API key first";
-  const selectedSupportsAttachments = model
-    ? supportsAttachments(provider, model)
-    : false;
+  const handleProviderError = useCallback((message: string) => {
+    setError(message);
+  }, []);
+  const {
+    availableModels,
+    handleModelChange,
+    model,
+    provider,
+    providerKeys,
+    selectedModelLabel,
+    selectedModelValue,
+    selectedSupportsAttachments,
+    updateProviderKey,
+  } = useProviderModels({
+    onError: handleProviderError,
+    vault,
+  });
+  const {
+    clearEditingConversation,
+    confirmDeleteConversation,
+    contextMenu,
+    conversations,
+    editingConversationId,
+    handleContextMenuDelete,
+    handleContextMenuEdit,
+    handleConversationContextMenu,
+    handleRenameSubmit,
+    loadingConversations,
+    pendingDelete,
+    setContextMenu,
+    setConversations,
+    setPendingDelete,
+  } = useConversationCatalog({
+    activeConversationId: conversationId,
+    onActiveConversationDeleted: () => {
+      navigate("/");
+      setConversationId(null);
+      setMessages([]);
+      setError(null);
+    },
+    onError: setError,
+    vault,
+  });
   const activeConversationTitle =
     conversations.find((conversation) => conversation.id === conversationId)?.title ??
     "New chat";
-  const contextTokenEstimate = useMemo(
-    () => estimateContextTokens(messages, draft, pendingFiles),
-    [messages, draft, pendingFiles],
+  const { shareConversationSnapshot, shareMessageTurn } = useMessageSharing({
+    activeConversationTitle,
+    busy,
+    conversationId,
+    messages,
+    onError: setError,
+    onNotice: setNotice,
+    vault,
+  });
+  const { deleteUserTurn } = useMessageDeletion({
+    busy,
+    conversationId,
+    messages,
+    onError: setError,
+    setConversations,
+    setMessages,
+    vault,
+  });
+  const chatReturnPath = conversationId
+    ? `/chat/${encodeURIComponent(conversationId)}`
+    : "/";
+  const messageActionContext = useMemo(
+    () => ({
+      conversationId,
+      model,
+      provider,
+      providerKeys,
+      reasoningEffort,
+      thinkingMode,
+      vault,
+    }),
+    [
+      conversationId,
+      model,
+      provider,
+      providerKeys,
+      reasoningEffort,
+      thinkingMode,
+      vault,
+    ],
   );
-
   useEffect(() => {
     document.title = conversationId
       ? `${activeConversationTitle} — ${env.appName}`
@@ -215,57 +235,16 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
   }, [conversationId, activeConversationTitle]);
 
   useEffect(() => {
-    let cancelled = false;
+    if (isSettingsRoute) return;
+    if (busyRef.current) return;
 
-    async function loadExistingConversations() {
-      setLoadingConversations(true);
-      setError(null);
-
-      try {
-        await flushPendingAttachmentStorageRemovals(vault.userId);
-        const rows = await loadConversations(vault);
-        if (!cancelled) {
-          setConversations(rows);
-
-          const routedConversationId = getRouteConversationId();
-          if (routedConversationId) {
-            void openConversation(routedConversationId, false);
-          }
-        }
-      } catch (unknownError) {
-        if (!cancelled) {
-          setError(
-            unknownError instanceof Error
-              ? unknownError.message
-              : "Unable to load conversations.",
-          );
-        }
-      } finally {
-        if (!cancelled) setLoadingConversations(false);
-      }
+    if (routeConversationId) {
+      void openConversation(routeConversationId, false);
+      return;
     }
 
-    loadExistingConversations();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [vault]);
-
-  useEffect(() => {
-    function handlePopState() {
-      const routedConversationId = getRouteConversationId();
-      if (routedConversationId) {
-        void openConversation(routedConversationId, false);
-        return;
-      }
-
-      startNewConversation(false);
-    }
-
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
-  }, [vault]);
+    startNewConversation(false);
+  }, [isSettingsRoute, routeConversationId, vault]);
 
   useClickOutside({
     open: settingsPopoverOpen,
@@ -279,18 +258,6 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     onClose: () => setMobileConversationsOpen(false),
   });
 
-  useClickOutside({
-    open: modelMenuOpen,
-    ref: modelMenuRef,
-    onClose: () => setModelMenuOpen(false),
-  });
-
-  useClickOutside({
-    open: reasoningMenuOpen,
-    ref: reasoningMenuRef,
-    onClose: () => setReasoningMenuOpen(false),
-  });
-
   useEffect(() => {
     return () => {
       abortControllerRef.current?.abort();
@@ -298,21 +265,9 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
         window.clearInterval(statsTimerRef.current);
         statsTimerRef.current = undefined;
       }
-      busyRef.current = false;
+      clearBusyLock();
     };
-  }, []);
-
-  useEffect(() => {
-    if (!busy) return;
-
-    function handleBeforeUnload(event: BeforeUnloadEvent) {
-      event.preventDefault();
-      event.returnValue = "";
-    }
-
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [busy]);
+  }, [clearBusyLock]);
 
   useEffect(() => {
     const node = messagesRef.current;
@@ -334,126 +289,35 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     return () => observer.disconnect();
   }, [messages, busy, loadingMessages]);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadSavedProviderKeys() {
-      try {
-        const savedKeys = await loadEncryptedProviderKeys(vault);
-
-        for (const providerId of ["openai", "deepseek"] as ProviderId[]) {
-          const apiKey = savedKeys[providerId];
-          if (!apiKey) continue;
-
-          setProviderKeys((current) => ({
-            ...current,
-            [providerId]: {
-              ...current[providerId],
-              apiKey,
-              hiddenModelIds: loadHiddenModelIds(vault.userId, providerId),
-            },
-          }));
-
-          const result = await testProviderKey(providerId, apiKey);
-          if (cancelled) return;
-          const hiddenModelIds = loadHiddenModelIds(vault.userId, providerId);
-          const models = result.models.map((availableModel) =>
-            enrichProviderModel(providerId, availableModel),
-          );
-          const firstVisibleModel = models.find(
-            (availableModel) => !hiddenModelIds.includes(availableModel.id),
-          );
-
-          setProviderKeys((current) => ({
-            ...current,
-            [providerId]: {
-              apiKey,
-              hiddenModelIds,
-              models,
-              tested: true,
-            },
-          }));
-
-          if (!model && firstVisibleModel) {
-            setProvider(providerId);
-            setModel(firstVisibleModel.id);
-          }
-        }
-      } catch (unknownError) {
-        if (!cancelled) {
-          setError(
-            unknownError instanceof Error
-              ? unknownError.message
-              : "Unable to load saved provider keys.",
-          );
-        }
-      }
-    }
-
-    loadSavedProviderKeys();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [vault]);
-
-  function updateProviderKey(providerId: ProviderId, state: ProviderKeyState) {
-    saveHiddenModelIds(vault.userId, providerId, state.hiddenModelIds);
-    const models = state.models.map((availableModel) =>
-      enrichProviderModel(providerId, availableModel),
-    );
-    const firstVisibleModel = models.find(
-      (availableModel) => !state.hiddenModelIds.includes(availableModel.id),
-    );
-
-    setProviderKeys((current) => ({
-      ...current,
-      [providerId]: {
-        ...state,
-        models,
-      },
-    }));
-    if (!model && firstVisibleModel) {
-      setProvider(providerId);
-      setModel(firstVisibleModel.id);
-      return;
-    }
-
-    if (provider !== providerId) return;
-
-    if (models.length === 0) {
-      setModel("");
-      return;
-    }
-
-    if (firstVisibleModel) {
-      setModel((currentModel) => {
-        const selectedStillVisible = models.some(
-          (availableModel) =>
-            availableModel.id === currentModel &&
-            !state.hiddenModelIds.includes(availableModel.id),
-        );
-        return selectedStillVisible ? currentModel : firstVisibleModel.id;
-      });
-    } else if (state.hiddenModelIds.includes(model)) {
-      setModel("");
-    }
-  }
-
   function startNewConversation(updateRoute = true) {
-    if (updateRoute) pushNewConversationRoute();
+    if (updateRoute) navigate("/");
     setConversationId(null);
     setMessages([]);
     setError(null);
-    setEditingConversationId(null);
+    clearEditingConversation();
+  }
+
+  function openProviderSettings() {
+    navigate("/settings/provider", {
+      state: {
+        returnTo: chatReturnPath,
+      },
+    });
   }
 
   async function openConversation(nextConversationId: string, updateRoute = true) {
-    if (updateRoute) pushConversationRoute(nextConversationId);
+    if (conversationId === nextConversationId) {
+      if (updateRoute) navigate(`/chat/${encodeURIComponent(nextConversationId)}`);
+      return;
+    }
+    if (openingConversationRef.current === nextConversationId) return;
+
+    openingConversationRef.current = nextConversationId;
+    if (updateRoute) navigate(`/chat/${encodeURIComponent(nextConversationId)}`);
     setConversationId(nextConversationId);
     setLoadingMessages(true);
     setError(null);
-    setEditingConversationId(null);
+    clearEditingConversation();
     autoScrollRef.current = true;
 
     try {
@@ -474,118 +338,27 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
           : "Unable to load messages.",
       );
     } finally {
+      if (openingConversationRef.current === nextConversationId) {
+        openingConversationRef.current = null;
+      }
       setLoadingMessages(false);
     }
   }
 
-  function handleModelChange(value: string) {
-    const [nextProvider, ...modelParts] = value.split(":");
-    if ((nextProvider === "openai" || nextProvider === "deepseek") && modelParts.length > 0) {
-      setProvider(nextProvider);
-      setModel(modelParts.join(":"));
-      setModelMenuOpen(false);
-    }
+  function handleComposerModelChange(value: string) {
+    handleModelChange(value);
+    closeModelMenu();
   }
 
-  function handleReasoningEffortChange(value: ReasoningEffort) {
-    setReasoningEffort(value);
-    setReasoningMenuOpen(false);
-  }
-
-  function handleMessagesScroll(event: UIEvent<HTMLDivElement>) {
+  const handleMessagesScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
     const node = event.currentTarget;
     const distanceFromBottom =
       node.scrollHeight - node.scrollTop - node.clientHeight;
     autoScrollRef.current = distanceFromBottom < 96;
-  }
-
-  function handleDraftKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key !== "Enter" || event.shiftKey) return;
-    event.preventDefault();
-    event.currentTarget.form?.requestSubmit();
-  }
+  }, []);
 
   function stopResponse() {
     abortControllerRef.current?.abort();
-  }
-
-  async function confirmDeleteConversation() {
-    if (!pendingDelete) return;
-
-    try {
-      await deleteConversation(vault, pendingDelete.id);
-    } catch (unknownError) {
-      setError(
-        unknownError instanceof Error
-          ? unknownError.message
-          : "Unable to delete conversation.",
-      );
-      setPendingDelete(null);
-      return;
-    }
-
-    setConversations((current) =>
-      current.filter((conversation) => conversation.id !== pendingDelete.id),
-    );
-
-    if (conversationId === pendingDelete.id) {
-      pushNewConversationRoute();
-      setConversationId(null);
-      setMessages([]);
-      setError(null);
-    }
-
-    if (editingConversationId === pendingDelete.id) {
-      setEditingConversationId(null);
-    }
-
-    setPendingDelete(null);
-  }
-
-  function handleConversationContextMenu(
-    conversation: ConversationListItem,
-    x: number,
-    y: number,
-  ) {
-    setContextMenu({ conversation, x, y });
-  }
-
-  function handleContextMenuEdit() {
-    if (!contextMenu) return;
-    setEditingConversationId(contextMenu.conversation.id);
-    setContextMenu(null);
-  }
-
-  function handleContextMenuDelete() {
-    if (!contextMenu) return;
-    setPendingDelete(contextMenu.conversation);
-    setContextMenu(null);
-  }
-
-  async function handleRenameSubmit(
-    conversationId: string,
-    title: string,
-  ) {
-    setEditingConversationId(null);
-    const trimmed = title.trim();
-    if (!trimmed) return;
-
-    try {
-      await updateConversationTitle(vault, conversationId, trimmed);
-      setConversations((current) =>
-        current.map((conversation) =>
-          conversation.id === conversationId
-            ? { ...conversation, title: trimmed, updatedAt: new Date().toISOString() }
-            : conversation,
-        ),
-      );
-    } catch (unknownError) {
-      setError(
-        unknownError instanceof Error
-          ? unknownError.message
-          : "Unable to rename conversation.",
-      );
-    }
   }
 
   async function handleSubmit(event: FormEvent) {
@@ -612,18 +385,6 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
       title: submittedDraft || submittedFiles[0]?.name || "New conversation",
       clearComposer: true,
     });
-  }
-
-  function acquireBusyLock() {
-    if (busyRef.current) return false;
-    busyRef.current = true;
-    setBusy(true);
-    return true;
-  }
-
-  function releaseBusyLock() {
-    busyRef.current = false;
-    setBusy(false);
   }
 
   async function sendUserTurn({
@@ -656,35 +417,28 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
       lockHeld = false;
     };
 
-    if (!turnModel) {
+    const providerKey = resolveProviderApiKey({
+      model: turnModel,
+      provider: turnProvider,
+      providerKeys,
+    });
+    if (!providerKey.ok) {
       releaseHeldBusyLock();
-      setSettingsOpen(true);
-      setError("Test a provider key in Settings before choosing a model.");
+      setError(providerKey.error);
+      openProviderSettings();
       return;
     }
+    const apiKey = providerKey.apiKey;
 
-    const providerKeyState = providerKeys[turnProvider];
-    if (!providerKeyState) {
+    const attachmentError = validateTurnAttachments({
+      model: turnModel,
+      pendingAttachments,
+      provider: turnProvider,
+      reusedAttachments,
+    });
+    if (attachmentError) {
       releaseHeldBusyLock();
-      setSettingsOpen(true);
-      setError(`Configure and test a ${formatProviderLabel(turnProvider)} API key first.`);
-      return;
-    }
-
-    const apiKey = providerKeyState.apiKey.trim();
-    if (!apiKey) {
-      releaseHeldBusyLock();
-      setSettingsOpen(true);
-      setError(`Configure and test a ${formatProviderLabel(turnProvider)} API key first.`);
-      return;
-    }
-
-    if (
-      (pendingAttachments.length > 0 || reusedAttachments.length > 0) &&
-      !supportsAttachments(turnProvider, turnModel)
-    ) {
-      releaseHeldBusyLock();
-      setError("The selected model is not configured for file or image input.");
+      setError(attachmentError);
       return;
     }
 
@@ -695,22 +449,15 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     setError(null);
     autoScrollRef.current = true;
 
-    let pendingAttachmentMap: Record<string, ChatAttachment>;
+    let turnDraft: Awaited<ReturnType<typeof createChatTurnDraft>>;
     try {
-      pendingAttachmentMap = Object.fromEntries(
-        await Promise.all(
-          pendingAttachments.map(async (attachment) => [
-            attachment.id,
-            {
-              id: attachment.id,
-              fileName: attachment.file.name,
-              mimeType: attachment.file.type || "application/octet-stream",
-              sizeBytes: attachment.file.size,
-              dataUrl: await fileToDataUrl(attachment.file),
-            },
-          ]),
-        ),
-      ) as Record<string, ChatAttachment>;
+      turnDraft = await createChatTurnDraft({
+        parts,
+        pendingAttachments,
+        provider: turnProvider,
+        reusedAttachments,
+        model: turnModel,
+      });
     } catch (unknownError) {
       setError(
         unknownError instanceof Error
@@ -720,37 +467,12 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
       releaseHeldBusyLock();
       return;
     }
-    const reusedAttachmentMap = Object.fromEntries(
-      reusedAttachments.map((attachment) => [attachment.id, attachment]),
-    );
-    const requestAttachmentMap = {
-      ...reusedAttachmentMap,
-      ...pendingAttachmentMap,
-    };
-    const attachmentMap = requestAttachmentMap;
-    const userMessage: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: "user",
-      status: "pending",
-      provider: turnProvider,
-      model: turnModel,
-      parts,
-      attachments: attachmentMap,
-      createdAt: new Date().toISOString(),
-    };
-    const completedUserMessage: ChatMessage = {
-      ...userMessage,
-      status: "completed",
-    };
-    const assistantMessage: ChatMessage = {
-      id: crypto.randomUUID(),
-      role: "assistant",
-      status: "streaming",
-      provider: turnProvider,
-      model: turnModel,
-      parts: [{ type: "markdown", text: "" }],
-      createdAt: new Date().toISOString(),
-    };
+    const {
+      assistantMessage,
+      completedUserMessage,
+      requestAttachmentMap,
+      userMessage,
+    } = turnDraft;
 
     if (clearComposer) {
       setDraft("");
@@ -763,6 +485,12 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     let userPersisted = false;
     let createdConversationId: string | null = null;
     let assistantContentPersisted = false;
+    let latestResponseStats: ChatResponseStats | undefined;
+    const usageRecorder = createUsageEventRecorder({
+      model: turnModel,
+      provider: turnProvider,
+      vault,
+    });
 
     try {
       const abortController = new AbortController();
@@ -771,9 +499,10 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
       const nextConversationId =
         conversationId ??
         (await createConversation(vault, title.slice(0, 80), turnProvider, turnModel));
+      usageRecorder.setConversationId(nextConversationId);
       if (isNewConversation) createdConversationId = nextConversationId;
       setConversationId(nextConversationId);
-      pushConversationRoute(nextConversationId);
+      navigate(`/chat/${encodeURIComponent(nextConversationId)}`);
       setConversations((current) =>
         isNewConversation
           ? upsertConversation(current, {
@@ -803,30 +532,13 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
       ]);
 
       const responseStartedAt = performance.now();
-      let streamedText = "";
-      let latestUsage = undefined as ChatResponseStats["usage"] | undefined;
-      statsTimer = window.setInterval(() => {
-        if (!streamedText.trim()) return;
-        const elapsedMs = Math.max(
-          0,
-          Math.round(performance.now() - responseStartedAt),
-        );
-        setMessages((current) =>
-          current.map((message) =>
-            message.id === assistantMessage.id
-              ? {
-                  ...message,
-                  responseStats: {
-                    elapsedMs,
-                    usage:
-                      latestUsage ??
-                      estimateUsageFromText(streamedText),
-                  },
-                }
-              : message,
-          ),
-        );
-      }, 250);
+      usageRecorder.start(responseStartedAt);
+      const assistantStreamState = createAssistantStreamState({
+        assistantMessageId: assistantMessage.id,
+        responseStartedAt,
+        setMessages,
+      });
+      statsTimer = assistantStreamState.startStatsTimer();
       statsTimerRef.current = statsTimer;
 
       const { text: assistantText, stats } = await streamChat({
@@ -847,47 +559,13 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
         ],
         signal: abortController.signal,
         onToken: (token) => {
-          streamedText += token;
-          const elapsedMs = Math.max(
-            0,
-            Math.round(performance.now() - responseStartedAt),
-          );
-          const estimatedUsage = estimateUsageFromText(streamedText);
-          setMessages((current) =>
-            current.map((message) =>
-              message.id === assistantMessage.id
-                ? {
-                    ...message,
-                    parts: appendTokenToMessageParts(message.parts, token),
-                    responseStats: {
-                      elapsedMs,
-                      usage: latestUsage ?? estimatedUsage,
-                    },
-                  }
-                : message,
-            ),
-          );
+          assistantStreamState.appendToken(token);
         },
         onUsage: (usage) => {
-          latestUsage = usage;
-          setMessages((current) =>
-            current.map((message) =>
-              message.id === assistantMessage.id
-                ? {
-                    ...message,
-                    responseStats: {
-                      elapsedMs: Math.max(
-                        0,
-                        Math.round(performance.now() - responseStartedAt),
-                      ),
-                      usage,
-                    },
-                  }
-                : message,
-            ),
-          );
+          assistantStreamState.setUsage(usage);
         },
       });
+      latestResponseStats = stats;
 
       const assistantTextHasContent = assistantText.trim().length > 0;
       if (assistantTextHasContent) {
@@ -908,6 +586,12 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
         if (cleanupFailed) {
           setError("Response saved, but old message parts could not be cleaned up.");
         }
+        await usageRecorder.record({
+          messageId: completedAssistantMessage.id,
+          stats,
+          success: !abortController.signal.aborted,
+          errorCode: abortController.signal.aborted ? "aborted" : undefined,
+        });
         try {
           await afterTurnSaved?.(completedUserMessage, completedAssistantMessage);
         } catch {
@@ -921,26 +605,21 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
           ),
         );
       } else {
-        await deleteMessages(vault, [assistantMessage.id]);
+        const wasAborted = abortController.signal.aborted;
+        await handleEmptyAssistantResponse({
+          assistantMessage,
+          setMessages,
+          userMessage,
+          vault,
+          wasAborted,
+        });
         assistantPersisted = false;
-        await updateMessageStatus(
-          userMessage.id,
-          abortController.signal.aborted ? "cancelled" : "failed",
-        ).catch(() => undefined);
-        setMessages((current) =>
-          current
-            .filter((message) => message.id !== assistantMessage.id)
-            .map((message) =>
-              message.id === userMessage.id
-                ? {
-                    ...message,
-                    status: abortController.signal.aborted
-                      ? ("cancelled" as const)
-                      : ("failed" as const),
-                  }
-                : message,
-            ),
-        );
+        await usageRecorder.record({
+          messageId: userMessage.id,
+          stats,
+          success: false,
+          errorCode: wasAborted ? "aborted" : "empty_response",
+        });
         await safeTouchConversation(nextConversationId);
         return;
       }
@@ -952,34 +631,26 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
           ? unknownError.message
           : "Chat request failed.",
       );
-      if (!assistantContentPersisted) {
-        await updateMessageStatus(userMessage.id, "failed").catch(() => undefined);
-      }
-      if (assistantPersisted && !assistantContentPersisted) {
-        await deleteMessages(vault, [assistantMessage.id]).catch(() => undefined);
-      }
-      if (createdConversationId && !userPersisted) {
-        await deleteConversation(vault, createdConversationId).catch(() => undefined);
-        setConversations((current) =>
-          current.filter((conversation) => conversation.id !== createdConversationId),
-        );
-        setConversationId(null);
-        pushNewConversationRoute();
-      } else if (createdConversationId || conversationId) {
-        await safeTouchConversation(createdConversationId ?? conversationId!);
-      }
-      setMessages((current) =>
-        current
-          .filter((message) => message.id !== assistantMessage.id)
-          .map((message) =>
-            message.id === userMessage.id && !assistantContentPersisted
-              ? {
-                  ...message,
-                  status: "failed" as const,
-                }
-              : message,
-          ),
-      );
+      await usageRecorder.record({
+        messageId: userPersisted ? userMessage.id : null,
+        stats: latestResponseStats,
+        success: false,
+        errorCode: "request_failed",
+      });
+      await rollbackFailedTurn({
+        assistantContentPersisted,
+        assistantMessage,
+        assistantPersisted,
+        conversationId,
+        createdConversationId,
+        navigateHome: () => navigate("/"),
+        setConversationId,
+        setConversations,
+        setMessages,
+        userMessage,
+        userPersisted,
+        vault,
+      });
     } finally {
       if (statsTimer !== undefined) window.clearInterval(statsTimer);
       if (statsTimerRef.current === statsTimer) {
@@ -988,141 +659,6 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
       abortControllerRef.current = null;
       releaseHeldBusyLock();
     }
-  }
-
-  async function deleteUserTurn(userMessage: ChatMessage) {
-    if (busyRef.current) return;
-
-    const turnMessageIds = userTurnMessageIds(messages, userMessage.id);
-    if (turnMessageIds.length === 0) return;
-
-    if (!conversationId) {
-      setMessages((current) =>
-        current.filter((message) => !turnMessageIds.includes(message.id)),
-      );
-      return;
-    }
-
-    try {
-      setError(null);
-      await deleteMessages(vault, turnMessageIds);
-      const nextMessages = messages.filter(
-        (message) => !turnMessageIds.includes(message.id),
-      );
-      setMessages(nextMessages);
-      await refreshConversationLastMessageAt(conversationId);
-      setConversations((current) =>
-        current.map((conversation) =>
-          conversation.id === conversationId
-            ? { ...conversation, updatedAt: new Date().toISOString() }
-            : conversation,
-        ),
-      );
-    } catch (unknownError) {
-      setError(
-        unknownError instanceof Error
-          ? unknownError.message
-          : "Unable to delete message.",
-      );
-    }
-  }
-
-  async function shareConversationSnapshot() {
-    if (!conversationId || messages.length === 0 || busyRef.current) return;
-
-    try {
-      setError(null);
-      setNotice(null);
-      const shareMessages = await materializeMessagesForShare(messages);
-      const url = await createConversationShare({
-        conversationId,
-        messages: shareMessages,
-        title: activeConversationTitle,
-        vault,
-      });
-      await copyShareUrl(url);
-      setNotice("Conversation share link copied.");
-    } catch (unknownError) {
-      setError(
-        unknownError instanceof Error
-          ? unknownError.message
-          : "Unable to share conversation.",
-      );
-    }
-  }
-
-  async function shareMessageTurn(message: ChatMessage) {
-    if (!conversationId || busyRef.current) return;
-
-    const turn = messageTurnPair(messages, message.id);
-    if (!turn) {
-      setError("A message can only be shared after its paired response is available.");
-      return;
-    }
-
-    try {
-      setError(null);
-      setNotice(null);
-      const shareMessages = await materializeMessagesForShare([
-        turn.userMessage,
-        turn.assistantMessage,
-      ]);
-      const url = await createMessageTurnShare({
-        assistantMessageId: turn.assistantMessage.id,
-        conversationId,
-        messages: shareMessages,
-        title: textFromParts(turn.userMessage.parts).trim() || "Shared message",
-        userMessageId: turn.userMessage.id,
-        vault,
-      });
-      await copyShareUrl(url);
-      setNotice("Message share link copied.");
-    } catch (unknownError) {
-      setError(
-        unknownError instanceof Error
-          ? unknownError.message
-          : "Unable to share message.",
-      );
-    }
-  }
-
-  async function materializeMessagesForShare(shareMessages: ChatMessage[]) {
-    if (!conversationId) throw new Error("Conversation is not ready.");
-
-    return Promise.all(
-      shareMessages.map(async (message) => {
-        const attachmentEntries = await Promise.all(
-          attachmentIdsFromParts(message.parts).map(async (attachmentId) => {
-            const attachment = message.attachments?.[attachmentId];
-            if (!attachment) {
-              throw new Error("Message attachment metadata is missing.");
-            }
-
-            return [
-              attachmentId,
-              {
-                ...attachment,
-                dataUrl:
-                  attachment.dataUrl ??
-                  (await encryptedAttachmentToDataUrl(
-                    vault,
-                    conversationId,
-                    attachment,
-                  )),
-              },
-            ] as const;
-          }),
-        );
-
-        return {
-          ...message,
-          attachments:
-            attachmentEntries.length > 0
-              ? Object.fromEntries(attachmentEntries)
-              : undefined,
-        } satisfies ChatMessage;
-      }),
-    );
   }
 
   async function retryUserTurn(userMessage: ChatMessage) {
@@ -1136,40 +672,33 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
       setError(null);
       const turnProvider = userMessage.provider ?? provider;
       const turnModel = userMessage.model ?? model;
-
-      if (!turnModel) {
-        setSettingsOpen(true);
-        setError("Test a provider key in Settings before choosing a model.");
+      const providerKey = resolveProviderApiKey({
+        model: turnModel,
+        provider: turnProvider,
+        providerKeys,
+      });
+      if (!providerKey.ok) {
+        setError(providerKey.error);
+        openProviderSettings();
         return;
       }
-
-      const providerKeyState = providerKeys[turnProvider];
-      if (!providerKeyState) {
-        setSettingsOpen(true);
-        setError(
-          `Configure and test a ${formatProviderLabel(turnProvider)} API key first.`,
-        );
-        return;
-      }
-
-      const apiKey = providerKeyState.apiKey.trim();
-      if (!apiKey) {
-        setSettingsOpen(true);
-        setError(
-          `Configure and test a ${formatProviderLabel(turnProvider)} API key first.`,
-        );
-        return;
-      }
+      const resolvedTurnModel = providerKey.model;
 
       if (!acquireBusyLock()) return;
-      const retryAttachments = await retryAttachmentsFromMessage(userMessage);
-      if (
-        (retryAttachments.reusedAttachments.length > 0 ||
-          retryAttachments.pendingAttachments.length > 0) &&
-        !supportsAttachments(turnProvider, turnModel)
-      ) {
+      const retryAttachments = await retryAttachmentsFromMessage({
+        conversationId: retryConversationId,
+        userMessage,
+        vault,
+      });
+      const attachmentError = validateTurnAttachments({
+        model: resolvedTurnModel,
+        pendingAttachments: retryAttachments.pendingAttachments,
+        provider: turnProvider,
+        reusedAttachments: retryAttachments.reusedAttachments,
+      });
+      if (attachmentError) {
         releaseBusyLock();
-        setError("The selected model is not configured for file or image input.");
+        setError(attachmentError);
         return;
       }
 
@@ -1186,7 +715,7 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
         title: textFromParts(userMessage.parts).trim() || "Retried message",
         historyMessages: retryHistory,
         turnProvider,
-        turnModel,
+        turnModel: resolvedTurnModel,
         afterTurnSaved: retryConversationId
           ? async (newUserMessage) => {
               await reassignAttachmentsToMessage(
@@ -1211,61 +740,6 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     }
   }
 
-  async function retryAttachmentsFromMessage(userMessage: ChatMessage) {
-    const attachmentParts = userMessage.parts.filter(
-      (part): part is Extract<MessagePart, { type: "image" | "file" }> =>
-        part.type === "image" || part.type === "file",
-    );
-
-    const attachments = await Promise.all(
-      attachmentParts.map(async (part) => {
-        const attachment = userMessage.attachments?.[part.attachmentId];
-        if (!attachment) throw new Error("Message attachment metadata is missing.");
-
-        let dataUrl = attachment.dataUrl;
-        if (!dataUrl) {
-          if (!conversationId) throw new Error("Conversation is not ready.");
-          dataUrl = await encryptedAttachmentToDataUrl(
-            vault,
-            conversationId,
-            attachment,
-          );
-        }
-        if (!attachment.storagePath) {
-          return {
-            kind: "pending" as const,
-            attachment: {
-              id: attachment.id,
-              file: await dataUrlToFile(
-                dataUrl,
-                attachment.fileName,
-                attachment.mimeType,
-              ),
-              type: part.type,
-            } satisfies PendingAttachment,
-          };
-        }
-
-        return {
-          kind: "reused" as const,
-          attachment: {
-            ...attachment,
-            dataUrl,
-          } satisfies ChatAttachment,
-        };
-      }),
-    );
-
-    return {
-      pendingAttachments: attachments.flatMap((entry) =>
-        entry.kind === "pending" ? [entry.attachment] : [],
-      ),
-      reusedAttachments: attachments.flatMap((entry) =>
-        entry.kind === "reused" ? [entry.attachment] : [],
-      ),
-    };
-  }
-
   const scrollMessagesToEnd = useCallback(() => {
     const node = messagesRef.current;
     if (!node || !autoScrollRef.current) return;
@@ -1288,110 +762,41 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
 
   return (
     <section className={sidebarCollapsed ? "chat-layout collapsed" : "chat-layout"}>
-      <aside className="side-panel">
-        <div className="sidebar-header">
-          {!sidebarCollapsed ? (
-            <div className="sidebar-brand">
-              <ShieldCheck size={18} />
-              <strong>{env.appName}</strong>
-            </div>
-          ) : null}
-          <button
-            className="icon-button collapse-button"
-            onClick={() => setSidebarCollapsed((value) => !value)}
-            type="button"
-            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-          >
-            {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
-          </button>
-        </div>
-
-        <button
-          className={sidebarCollapsed ? "new-chat-button icon-only" : "new-chat-button"}
-          onClick={() => startNewConversation()}
-          type="button"
-          aria-label="New chat"
-        >
-          <Plus size={16} />
-          {!sidebarCollapsed ? "New chat" : null}
-        </button>
-
-        {!sidebarCollapsed ? (
-          <div className="conversation-list">
-            {conversations.length > 0 && (
-              <ConversationList
-                activeConversationId={conversationId}
-                conversations={conversations}
-                editingConversationId={editingConversationId}
-                onContextMenu={handleConversationContextMenu}
-                onOpenConversation={(nextConversationId) => {
-                  void openConversation(nextConversationId);
-                }}
-                onRenameSubmit={handleRenameSubmit}
-                variant="sidebar"
-              />
-            )}
-          </div>
-        ) : null}
-
-        <div className="sidebar-actions">
-          {conversations.length > 0 ? (
-            <div className="mobile-conversations-menu" ref={mobileConversationsRef}>
-              <button
-                className="ghost-button mobile-conversations-button"
-                onClick={() => {
-                  setSettingsPopoverOpen(false);
-                  setMobileConversationsOpen((value) => !value);
-                }}
-                type="button"
-                aria-label="Conversations"
-                aria-expanded={mobileConversationsOpen}
-              >
-                <List size={16} />
-              </button>
-              <div
-                className={
-                  mobileConversationsOpen
-                    ? "mobile-conversations-popover open"
-                    : "mobile-conversations-popover"
-                }
-                aria-hidden={!mobileConversationsOpen}
-              >
-                <ConversationList
-                  activeConversationId={conversationId}
-                  conversations={conversations}
-                  onOpenConversation={(nextConversationId) => {
-                    setMobileConversationsOpen(false);
-                    void openConversation(nextConversationId);
-                  }}
-                  variant="popover"
-                />
-              </div>
-            </div>
-          ) : null}
-          <SettingsPopover
-            menuRef={settingsMenuRef}
-            onConfigureProviders={() => {
-              setSettingsOpen(true);
-              setSettingsPopoverOpen(false);
-            }}
-            onLogout={onLogout}
-            onOpenChange={(open) => {
-              setMobileConversationsOpen(false);
-              setSettingsPopoverOpen(open);
-            }}
-            open={settingsPopoverOpen}
-            sidebarCollapsed={sidebarCollapsed}
-            user={user}
-          />
-        </div>
-      </aside>
+      <ChatSidebar
+        activeConversationId={conversationId}
+        appName={env.appName}
+        conversations={conversations}
+        editingConversationId={editingConversationId}
+        mobileConversationsOpen={mobileConversationsOpen}
+        mobileConversationsRef={mobileConversationsRef}
+        onContextMenu={handleConversationContextMenu}
+        onLogout={onLogout}
+        onOpenConversation={(nextConversationId) => {
+          setMobileConversationsOpen(false);
+          void openConversation(nextConversationId);
+        }}
+        onRenameSubmit={handleRenameSubmit}
+        onSettingsPopoverOpenChange={(open) => {
+          setMobileConversationsOpen(false);
+          setSettingsPopoverOpen(open);
+        }}
+        onStartNewConversation={() => startNewConversation()}
+        onToggleMobileConversations={() => {
+          setSettingsPopoverOpen(false);
+          setMobileConversationsOpen((value) => !value);
+        }}
+        onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
+        returnTo={chatReturnPath}
+        settingsMenuRef={settingsMenuRef}
+        settingsPopoverOpen={settingsPopoverOpen}
+        sidebarCollapsed={sidebarCollapsed}
+        user={user}
+      />
 
       <div className="conversation">
         <header className="conversation-header">
           <strong>{activeConversationTitle}</strong>
           <div className="conversation-meta">
-            <span>~{contextTokenEstimate.toLocaleString()} tokens</span>
             <button
               aria-label="Share conversation"
               className="conversation-share-button"
@@ -1407,350 +812,52 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
           </div>
         </header>
 
-        <div
-          className="messages"
-          aria-live="polite"
-          onScroll={handleMessagesScroll}
-          ref={messagesRef}
-        >
-          {loadingConversations || loadingMessages ? (
-            <div className="empty-state">
-              <h1>Loading conversation</h1>
-              <p>Decrypting messages in this browser.</p>
-            </div>
-          ) : messages.length === 0 ? (
-            <div className="empty-state">
-              <h1>Start a conversation</h1>
-              <p>
-                Configure and test a provider key in Settings. Available models
-                will appear below the input.
-              </p>
-            </div>
-          ) : (
-            messages.map((message) => (
-              <article className={`message ${message.role}`} key={message.id}>
-                <span>{message.role}</span>
-                {message.role === "assistant" ? (
-                  messageHasRenderableParts(message) ? (
-                    <div
-                      className={
-                        messageHasAttachmentsAndBody(message.parts)
-                          ? "message-content with-divider"
-                          : "message-content"
-                      }
-                    >
-                      {orderedMessageParts(message.parts).map((part, index) => (
-                        <MessagePartRenderer
-                          attachments={message.attachments}
-                          key={`${message.id}:${index}`}
-                          loadAttachmentPreview={loadAttachmentPreview}
-                          part={part}
-                        />
-                      ))}
-                    </div>
-                  ) : message.status === "pending" || message.status === "streaming" ? (
-                    <div className="thinking-indicator" aria-label="Thinking">
-                      Thinking
-                    </div>
-                  ) : null
-                ) : (
-                  <div className="user-message-row">
-                    {message.status === "failed" ? (
-                      <div className="message-failure-icon" aria-label="Send failed">
-                        <CircleAlert size={15} />
-                      </div>
-                    ) : null}
-                    <div
-                      className={
-                        messageHasAttachmentsAndBody(message.parts)
-                          ? "message-content with-divider"
-                          : "message-content"
-                      }
-                    >
-                      {orderedMessageParts(message.parts).map((part, index) => (
-                        <MessagePartRenderer
-                          attachments={message.attachments}
-                          key={`${message.id}:${index}`}
-                          loadAttachmentPreview={loadAttachmentPreview}
-                          part={part}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
-                {message.role === "user" ? (
-                  <div className="message-actions">
-                    <button
-                      aria-label="Share message and response"
-                      disabled={busy}
-                      onClick={() => {
-                        void shareMessageTurn(message);
-                      }}
-                      title="Share message and response"
-                      type="button"
-                    >
-                      <Share2 size={14} />
-                    </button>
-                    <button
-                      aria-label={
-                        message.status === "pending"
-                          ? "Sending message"
-                          : "Retry message"
-                      }
-                      disabled={busy}
-                      onClick={() => {
-                        void retryUserTurn(message);
-                      }}
-                      title={message.status === "pending" ? "Sending" : "Retry"}
-                      type="button"
-                    >
-                      <RotateCcw
-                        className={
-                          message.status === "pending" ? "spin" : undefined
-                        }
-                        size={14}
-                      />
-                    </button>
-                    <button
-                      aria-label="Delete message"
-                      disabled={busy}
-                      onClick={() => {
-                        void deleteUserTurn(message);
-                      }}
-                      title="Delete"
-                      type="button"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ) : null}
-                {message.role === "assistant" ? (
-                  <div className="assistant-message-meta">
-                    <button
-                      aria-label="Share message and response"
-                      disabled={busy}
-                      onClick={() => {
-                        void shareMessageTurn(message);
-                      }}
-                      title="Share message and response"
-                      type="button"
-                    >
-                      <Share2 size={14} />
-                    </button>
-                    {message.responseStats ? (
-                      <div className="message-stats">
-                        {formatResponseStats(message.responseStats)}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-              </article>
-            ))
-          )}
-        </div>
+        <MessageTimeline
+          actionContext={messageActionContext}
+          busy={busy}
+          loadAttachmentPreview={loadAttachmentPreview}
+          loadingConversations={loadingConversations}
+          loadingMessages={loadingMessages}
+          messages={messages}
+          messagesRef={messagesRef}
+          onDeleteUserTurn={deleteUserTurn}
+          onMessagesScroll={handleMessagesScroll}
+          onRetryUserTurn={retryUserTurn}
+          onShareMessageTurn={shareMessageTurn}
+        />
 
         {error ? <div className="notice danger">{error}</div> : null}
         {notice ? <div className="notice success">{notice}</div> : null}
 
-        <form className="composer" onSubmit={handleSubmit}>
-          <div className="composer-box">
-            {pendingFiles.length > 0 ? (
-              <div className="pending-attachments">
-                {pendingFiles.map((file, index) => (
-                  <div className="pending-attachment" key={`${file.name}:${file.size}:${index}`}>
-                    <span>{file.name}</span>
-                    <button
-                      aria-label={`Remove ${file.name}`}
-                      onClick={() =>
-                        setPendingFiles((current) =>
-                          current.filter((_, fileIndex) => fileIndex !== index),
-                        )
-                      }
-                      type="button"
-                    >
-                      <X size={13} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            <textarea
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={handleDraftKeyDown}
-              placeholder="Ask anything..."
-              rows={3}
-              value={draft}
-            />
-            <input
-              multiple
-              onChange={(event) => {
-                const files = Array.from(event.target.files ?? []);
-                setPendingFiles((current) => [...current, ...files]);
-                event.target.value = "";
-              }}
-              ref={fileInputRef}
-              type="file"
-              hidden
-            />
-            <div className="composer-controls">
-              <button
-                aria-label="Attach files"
-                className="attach-button"
-                disabled={!selectedSupportsAttachments || busy}
-                onClick={() => fileInputRef.current?.click()}
-                title={
-                  selectedSupportsAttachments
-                    ? "Attach files"
-                    : "Selected model does not support attachments"
-                }
-                type="button"
-              >
-                <Paperclip size={15} />
-              </button>
-              <div className="model-picker" ref={modelMenuRef}>
-                <button
-                  aria-expanded={modelMenuOpen}
-                  aria-haspopup="listbox"
-                  aria-label="Available model"
-                  className="model-picker-button"
-                  disabled={availableModels.length === 0}
-                  onClick={() => {
-                    setReasoningMenuOpen(false);
-                    setModelMenuOpen((value) => !value);
-                  }}
-                  type="button"
-                >
-                  <span>{selectedModelLabel}</span>
-                  <ChevronDown size={14} />
-                </button>
-                <div
-                  className={modelMenuOpen ? "model-menu open" : "model-menu"}
-                  role="listbox"
-                  aria-hidden={!modelMenuOpen}
-                >
-                  {availableModels.map((item) => {
-                    const value = `${item.provider}:${item.model.id}`;
-                    const selected = value === selectedModelValue;
-                    return (
-                      <button
-                        aria-selected={selected}
-                        className={
-                          selected ? "model-menu-item active" : "model-menu-item"
-                        }
-                        key={value}
-                        onClick={() => handleModelChange(value)}
-                        role="option"
-                        type="button"
-                      >
-                        <span>{item.model.id}</span>
-                        {item.model.description ? (
-                          <small>{item.model.description}</small>
-                        ) : null}
-                        {selected ? <Check size={14} /> : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              <button
-                aria-label="Toggle thinking mode"
-                aria-pressed={thinkingMode === "enabled"}
-                className={
-                  thinkingMode === "enabled"
-                    ? "request-toggle active"
-                    : "request-toggle"
-                }
-                disabled={busy}
-                onClick={() =>
-                  setThinkingMode((current) =>
-                    current === "enabled" ? "disabled" : "enabled",
-                  )
-                }
-                title="Thinking"
-                type="button"
-              >
-                <Brain size={14} />
-                <span>Thinking</span>
-              </button>
-              <div className="request-picker" ref={reasoningMenuRef}>
-                <button
-                  aria-expanded={reasoningMenuOpen}
-                  aria-haspopup="listbox"
-                  aria-label="Reasoning effort"
-                  className="request-picker-button"
-                  disabled={busy}
-                  onClick={() => {
-                    setModelMenuOpen(false);
-                    setReasoningMenuOpen((value) => !value);
-                  }}
-                  type="button"
-                >
-                  <Gauge size={14} />
-                  <span>Reasoning</span>
-                  <small>
-                    {
-                      reasoningEffortOptions.find(
-                        (option) => option.value === reasoningEffort,
-                      )?.label
-                    }
-                  </small>
-                  <ChevronDown size={14} />
-                </button>
-                <div
-                  className={
-                    reasoningMenuOpen ? "request-menu open" : "request-menu"
-                  }
-                  role="listbox"
-                  aria-hidden={!reasoningMenuOpen}
-                >
-                  {reasoningEffortOptions.map((option) => {
-                    const selected = option.value === reasoningEffort;
-                    return (
-                      <button
-                        aria-selected={selected}
-                        className={
-                          selected ? "request-menu-item active" : "request-menu-item"
-                        }
-                        key={option.value}
-                        onClick={() => handleReasoningEffortChange(option.value)}
-                        role="option"
-                        type="button"
-                      >
-                        <span>{option.label}</span>
-                        {selected ? <Check size={14} /> : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-              <button
-                className={busy ? "send-button stop-button" : "send-button"}
-                disabled={!busy && !draft.trim() && pendingFiles.length === 0}
-                onClick={busy ? stopResponse : undefined}
-                type={busy ? "button" : "submit"}
-                aria-label={busy ? "Stop response" : "Send message"}
-              >
-                <span className="send-icon-stack" aria-hidden="true">
-                  <span className={busy ? "send-icon inactive" : "send-icon active"}>
-                    <Send size={16} />
-                  </span>
-                  <span className={busy ? "send-icon active" : "send-icon inactive"}>
-                    <Square size={13} fill="currentColor" />
-                  </span>
-                </span>
-              </button>
-            </div>
-          </div>
-        </form>
+        <Composer
+          availableModels={availableModels}
+          busy={busy}
+          draft={draft}
+          fileInputRef={fileInputRef}
+          modelMenuOpen={modelMenuOpen}
+          modelMenuRef={modelMenuRef}
+          onAddPendingFiles={handleAddPendingFiles}
+          onDraftChange={setDraft}
+          onDraftKeyDown={handleDraftKeyDown}
+          onModelChange={handleComposerModelChange}
+          onReasoningEffortChange={handleReasoningEffortChange}
+          onRemovePendingFile={handleRemovePendingFile}
+          onSubmit={handleSubmit}
+          onStopResponse={stopResponse}
+          onToggleModelMenu={toggleModelMenu}
+          onToggleReasoningMenu={toggleReasoningMenu}
+          onToggleThinkingMode={toggleThinkingMode}
+          pendingFiles={pendingFiles}
+          reasoningEffort={reasoningEffort}
+          reasoningEffortOptions={reasoningEffortOptions}
+          reasoningMenuOpen={reasoningMenuOpen}
+          reasoningMenuRef={reasoningMenuRef}
+          selectedModelLabel={selectedModelLabel}
+          selectedModelValue={selectedModelValue}
+          selectedSupportsAttachments={selectedSupportsAttachments}
+          thinkingMode={thinkingMode}
+        />
       </div>
-
-      <SettingsModal
-        open={settingsOpen}
-        vault={vault}
-        providerKeys={providerKeys}
-        onClose={() => setSettingsOpen(false)}
-        onProviderKeyChange={updateProviderKey}
-      />
 
       <ContextMenu
         open={contextMenu !== null}
@@ -1810,422 +917,5 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
         </div>
       ) : null}
     </section>
-  );
-}
-
-function upsertConversation(
-  conversations: ConversationListItem[],
-  next: ConversationListItem,
-) {
-  const withoutCurrent = conversations.filter((item) => item.id !== next.id);
-  return [next, ...withoutCurrent];
-}
-
-function bumpConversation(
-  conversations: ConversationListItem[],
-  conversationId: string,
-) {
-  const current = conversations.find((item) => item.id === conversationId);
-  if (!current) return conversations;
-
-  return [
-    {
-      ...current,
-      updatedAt: new Date().toISOString(),
-    },
-    ...conversations.filter((item) => item.id !== conversationId),
-  ];
-}
-
-async function safeTouchConversation(conversationId: string) {
-  await touchConversation(conversationId).catch(() => undefined);
-}
-
-async function settleInterruptedAssistantMessages(
-  vault: Pick<UnlockedVault, "userId">,
-  messages: ChatMessage[],
-  conversationId: string,
-) {
-  const emptyInterruptedAssistantIds = new Set<string>();
-  const renderableInterruptedAssistantIds = new Set<string>();
-  const completedUserIds = new Set<string>();
-  const failedUserIds = new Set<string>();
-
-  for (let index = 0; index < messages.length; index += 1) {
-    const message = messages[index];
-    if (
-      message.role === "assistant" &&
-      (message.status === "pending" || message.status === "streaming")
-    ) {
-      if (messageHasRenderableParts(message)) {
-        renderableInterruptedAssistantIds.add(message.id);
-      } else {
-        emptyInterruptedAssistantIds.add(message.id);
-      }
-    }
-
-    if (
-      message.role === "user" &&
-      (message.status === "pending" || message.status === "completed")
-    ) {
-      const nextMessage = messages[index + 1];
-      if (nextMessage?.role === "assistant") {
-        const nextAssistantIsEmptyInterruption =
-          (nextMessage.status === "pending" || nextMessage.status === "streaming") &&
-          !messageHasRenderableParts(nextMessage);
-        if (message.status === "pending" && !nextAssistantIsEmptyInterruption) {
-          completedUserIds.add(message.id);
-        }
-      } else {
-        failedUserIds.add(message.id);
-      }
-      continue;
-    }
-
-    if (!emptyInterruptedAssistantIds.has(message.id)) continue;
-
-    const previousMessage = messages[index - 1];
-    if (previousMessage?.role === "user") {
-      failedUserIds.add(previousMessage.id);
-    }
-  }
-
-  if (
-    emptyInterruptedAssistantIds.size === 0 &&
-    renderableInterruptedAssistantIds.size === 0 &&
-    completedUserIds.size === 0 &&
-    failedUserIds.size === 0
-  ) {
-    return messages;
-  }
-
-  let nextMessages = messages;
-  let deletedEmptyAssistants = false;
-
-  if (emptyInterruptedAssistantIds.size > 0) {
-    try {
-      await deleteMessages(vault, [...emptyInterruptedAssistantIds]);
-      nextMessages = nextMessages.filter(
-        (message) => !emptyInterruptedAssistantIds.has(message.id),
-      );
-      deletedEmptyAssistants = true;
-    } catch {
-      // Delete failed for empty assistants; continue with remaining settlement
-      // so renderable assistants and failed users are still processed.
-    }
-  }
-
-  for (const messageId of renderableInterruptedAssistantIds) {
-    try {
-      await updateMessageStatus(messageId, "cancelled");
-      nextMessages = nextMessages.map((message) =>
-        message.id === messageId
-          ? {
-              ...message,
-              status: "cancelled" as const,
-            }
-          : message,
-      );
-    } catch {
-      // Keep local state aligned with DB; a future reload can retry settlement.
-    }
-  }
-
-  for (const messageId of completedUserIds) {
-    try {
-      await updateMessageStatus(messageId, "completed");
-      nextMessages = nextMessages.map((message) =>
-        message.id === messageId
-          ? {
-              ...message,
-              status: "completed" as const,
-            }
-          : message,
-      );
-    } catch {
-      // Keep local state aligned with DB; a future reload can retry settlement.
-    }
-  }
-
-  for (const messageId of failedUserIds) {
-    try {
-      await updateMessageStatus(messageId, "failed");
-      nextMessages = nextMessages.map((message) =>
-        message.id === messageId
-          ? {
-              ...message,
-              status: "failed" as const,
-            }
-          : message,
-      );
-    } catch {
-      // Keep local state aligned with DB; a future reload can retry settlement.
-    }
-  }
-
-  if (deletedEmptyAssistants) {
-    await refreshConversationLastMessageAt(conversationId).catch(() => undefined);
-  }
-
-  return nextMessages;
-}
-
-function appendTokenToMessageParts(parts: ChatMessage["parts"], token: string): MessagePart[] {
-  const nextParts = [...parts];
-  const lastPart = nextParts[nextParts.length - 1];
-
-  if (lastPart?.type === "markdown") {
-    nextParts[nextParts.length - 1] = {
-      ...lastPart,
-      text: lastPart.text + token,
-    };
-    return nextParts;
-  }
-
-  return [...nextParts, { type: "markdown" as const, text: token }];
-}
-
-function messageHasRenderableParts(message: ChatMessage) {
-  return message.parts.some((part) => {
-    if (part.type === "text" || part.type === "markdown") {
-      return part.text.trim().length > 0;
-    }
-
-    return true;
-  });
-}
-
-function orderedMessageParts(parts: MessagePart[]) {
-  const attachments = parts.filter(
-    (part) => part.type === "image" || part.type === "file",
-  );
-  const rest = parts.filter((part) => part.type !== "image" && part.type !== "file");
-  return [...attachments, ...rest];
-}
-
-function messageHasAttachmentsAndBody(parts: MessagePart[]) {
-  const hasAttachment = parts.some(
-    (part) => part.type === "image" || part.type === "file",
-  );
-  const hasBody = parts.some((part) => {
-    if (part.type === "image" || part.type === "file") return false;
-    if (part.type === "text" || part.type === "markdown") {
-      return part.text.trim().length > 0;
-    }
-    return true;
-  });
-  return hasAttachment && hasBody;
-}
-
-function userTurnMessageIds(messages: ChatMessage[], userMessageId: string) {
-  const userMessageIndex = messages.findIndex(
-    (message) => message.id === userMessageId,
-  );
-  if (userMessageIndex < 0 || messages[userMessageIndex]?.role !== "user") return [];
-
-  const nextMessage = messages[userMessageIndex + 1];
-  return nextMessage?.role === "assistant"
-    ? [userMessageId, nextMessage.id]
-    : [userMessageId];
-}
-
-function messageTurnPair(messages: ChatMessage[], messageId: string) {
-  const index = messages.findIndex((message) => message.id === messageId);
-  if (index < 0) return null;
-
-  const message = messages[index];
-  if (message?.role === "user") {
-    const assistantMessage = messages[index + 1];
-    if (assistantMessage?.role !== "assistant") return null;
-    return {
-      userMessage: message,
-      assistantMessage,
-    };
-  }
-
-  if (message?.role === "assistant") {
-    const userMessage = messages[index - 1];
-    if (userMessage?.role !== "user") return null;
-    return {
-      userMessage,
-      assistantMessage: message,
-    };
-  }
-
-  return null;
-}
-
-function attachmentIdsFromParts(parts: MessagePart[]) {
-  return [
-    ...new Set(
-      parts.flatMap((part) =>
-        part.type === "image" || part.type === "file" ? [part.attachmentId] : [],
-      ),
-    ),
-  ];
-}
-
-async function copyShareUrl(url: string) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(url);
-    return;
-  }
-
-  const textarea = document.createElement("textarea");
-  textarea.value = url;
-  textarea.setAttribute("readonly", "true");
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  document.body.appendChild(textarea);
-  textarea.select();
-  document.execCommand("copy");
-  textarea.remove();
-}
-
-function cloneMessageParts(parts: MessagePart[]) {
-  return parts.map((part) => ({ ...part })) as MessagePart[];
-}
-
-function estimateContextTokens(
-  messages: ChatMessage[],
-  draft: string,
-  pendingFiles: File[],
-) {
-  const messageTokens = messages.reduce((total, message) => {
-    const textTokens = message.parts.reduce((partTotal, part) => {
-      if (part.type === "text" || part.type === "markdown") {
-        return partTotal + estimateTokenCount(part.text);
-      }
-      if (part.type === "json") {
-        return partTotal + estimateTokenCount(JSON.stringify(part.value));
-      }
-      if (part.type === "tool_call" || part.type === "tool_result") {
-        return partTotal + estimateTokenCount(JSON.stringify(part));
-      }
-      return partTotal;
-    }, 0);
-    const attachmentTokens = Object.values(message.attachments ?? {}).reduce(
-      (attachmentTotal, attachment) =>
-        attachmentTotal + estimateAttachmentTokens(attachment.mimeType),
-      0,
-    );
-
-    return total + textTokens + attachmentTokens + 4;
-  }, 0);
-
-  const draftTokens = estimateTokenCount(draft);
-  const pendingFileTokens = pendingFiles.reduce(
-    (total, file) => total + estimateAttachmentTokens(file.type),
-    0,
-  );
-
-  return messageTokens + draftTokens + pendingFileTokens;
-}
-
-function estimateAttachmentTokens(mimeType: string) {
-  if (mimeType.startsWith("image/")) return 256;
-  return 64;
-}
-
-function formatResponseStats(stats: ChatResponseStats) {
-  const values = [formatDuration(stats.elapsedMs)];
-  const totalTokens = stats.usage?.totalTokens;
-
-  if (typeof totalTokens === "number") {
-    values.push(`${totalTokens.toLocaleString()} tokens`);
-  }
-
-  return values.join(" · ");
-}
-
-function estimateUsageFromText(text: string) {
-  return {
-    totalTokens: estimateTokenCount(text),
-  };
-}
-
-function estimateTokenCount(text: string) {
-  if (!text.trim()) return 0;
-
-  const cjkCharacters = text.match(/[\u3400-\u9fff\uf900-\ufaff]/g)?.length ?? 0;
-  const nonCjkText = text.replace(/[\u3400-\u9fff\uf900-\ufaff]/g, " ");
-  const wordLikeTokens = nonCjkText.match(/[A-Za-z0-9_]+|[^\sA-Za-z0-9_]/g)?.length ?? 0;
-
-  return Math.max(1, Math.ceil(cjkCharacters + wordLikeTokens * 1.3));
-}
-
-function formatDuration(elapsedMs: number) {
-  if (elapsedMs < 1000) return `${elapsedMs}ms`;
-  return `${(elapsedMs / 1000).toFixed(elapsedMs < 10000 ? 1 : 0)}s`;
-}
-
-function fileToDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener("load", () => {
-      if (typeof reader.result === "string") {
-        resolve(reader.result);
-        return;
-      }
-
-      reject(new Error("Unable to read file."));
-    });
-    reader.addEventListener("error", () => reject(reader.error));
-    reader.readAsDataURL(file);
-  });
-}
-
-function dataUrlToFile(dataUrl: string, fileName: string, mimeType: string) {
-  const separatorIndex = dataUrl.indexOf(",");
-  if (separatorIndex < 0) throw new Error("Invalid attachment data URL.");
-
-  const header = dataUrl.slice(0, separatorIndex);
-  const payload = dataUrl.slice(separatorIndex + 1);
-  const decoded = header.includes(";base64")
-    ? atob(payload)
-    : decodeURIComponent(payload);
-  const bytes = new Uint8Array(decoded.length);
-  for (let index = 0; index < decoded.length; index += 1) {
-    bytes[index] = decoded.charCodeAt(index);
-  }
-
-  return new File([bytes], fileName, {
-    type: mimeType || parseDataUrlMimeType(header) || "application/octet-stream",
-  });
-}
-
-function parseDataUrlMimeType(header: string) {
-  const match = /^data:([^;,]+)/.exec(header);
-  return match?.[1] ?? "";
-}
-
-function hiddenModelsStorageKey(userId: string, provider: ProviderId) {
-  return `salty:hidden-models:${userId}:${provider}`;
-}
-
-function loadHiddenModelIds(userId: string, provider: ProviderId) {
-  if (typeof window === "undefined") return [];
-
-  try {
-    const value = window.localStorage.getItem(hiddenModelsStorageKey(userId, provider));
-    const parsed = value ? JSON.parse(value) : [];
-    return Array.isArray(parsed)
-      ? parsed.filter((item): item is string => typeof item === "string")
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveHiddenModelIds(
-  userId: string,
-  provider: ProviderId,
-  hiddenModelIds: string[],
-) {
-  if (typeof window === "undefined") return;
-
-  window.localStorage.setItem(
-    hiddenModelsStorageKey(userId, provider),
-    JSON.stringify([...new Set(hiddenModelIds)]),
   );
 }

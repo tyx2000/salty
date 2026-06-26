@@ -1,16 +1,23 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Session, User } from "@supabase/supabase-js";
+import {
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useParams,
+} from "react-router";
 import { LogOut, ShieldCheck } from "lucide-react";
 import { ChatShell } from "./components/ChatShell";
 import { LoginPanel } from "./components/LoginPanel";
+import { SettingsPage } from "./components/SettingsPage";
 import { ShareViewer } from "./components/ShareViewer";
 import { env } from "./lib/env";
-import { parseShareRoute } from "./lib/shares";
+import type { ShareKind } from "./lib/shares";
 import { supabase } from "./lib/supabase";
 import { autoUnlockVault, forgetVault, type UnlockedVault } from "./lib/vault";
 
 export default function App() {
-  const shareRoute = parseShareRoute(window.location.pathname);
   const [session, setSession] = useState<Session | null>(null);
   const [vault, setVault] = useState<UnlockedVault | null>(null);
   const [loadingSession, setLoadingSession] = useState(true);
@@ -68,36 +75,97 @@ export default function App() {
   }
 
   if (loadingSession) {
-    return <main className="centered">Loading secure session...</main>;
-  }
-
-  if (shareRoute) {
     return (
-      <main className="app-shell share-active">
-        <ShareViewer kind={shareRoute.kind} token={shareRoute.token} />
+      <main className="centered">
+        <span className="loading-shimmer-text">Loading secure session...</span>
       </main>
     );
   }
 
   return (
+    <Routes>
+      <Route path="/share/:kind/:token" element={<ShareRoute />} />
+      <Route
+        path="/*"
+        element={
+          <AuthenticatedShell
+            onLogout={handleLogout}
+            user={user}
+            vault={vault}
+            vaultError={vaultError}
+          >
+            {(authedUser, unlockedVault) => (
+              <AuthenticatedWorkspace
+                onLogout={handleLogout}
+                user={authedUser}
+                vault={unlockedVault}
+              />
+            )}
+          </AuthenticatedShell>
+        }
+      />
+    </Routes>
+  );
+}
+
+function AuthenticatedWorkspace({
+  onLogout,
+  user,
+  vault,
+}: {
+  onLogout: () => void;
+  user: User;
+  vault: UnlockedVault;
+}) {
+  const location = useLocation();
+  const settingsMatch = location.pathname.match(/^\/settings(?:\/([^/]+))?$/);
+  const knownAppRoute =
+    location.pathname === "/" ||
+    /^\/chat\/[^/]+$/.test(location.pathname) ||
+    settingsMatch;
+
+  if (!knownAppRoute) return <Navigate replace to="/" />;
+
+  return (
+    <>
+      <ChatShell onLogout={onLogout} user={user} vault={vault} />
+      {settingsMatch ? <SettingsPage user={user} vault={vault} /> : null}
+    </>
+  );
+}
+
+function AuthenticatedShell({
+  children,
+  onLogout,
+  user,
+  vault,
+  vaultError,
+}: {
+  children: (user: User, vault: UnlockedVault) => ReactNode;
+  onLogout: () => void;
+  user: User | null;
+  vault: UnlockedVault | null;
+  vaultError: string | null;
+}) {
+  return (
     <main className={user && vault ? "app-shell chat-active" : "app-shell"}>
       {!(user && vault) ? (
         <header className="topbar">
-        <div className="brand">
-          <div className="brand-mark">
-            <ShieldCheck size={20} />
+          <div className="brand">
+            <div className="brand-mark">
+              <ShieldCheck size={20} />
+            </div>
+            <div>
+              <strong>{env.appName}</strong>
+              <span>Encrypted AI chat</span>
+            </div>
           </div>
-          <div>
-            <strong>{env.appName}</strong>
-            <span>Encrypted AI chat</span>
-          </div>
-        </div>
-        {user ? (
-          <button className="ghost-button" onClick={handleLogout}>
-            <LogOut size={16} />
-            Logout
-          </button>
-        ) : null}
+          {user ? (
+            <button className="ghost-button" onClick={onLogout}>
+              <LogOut size={16} />
+              Logout
+            </button>
+          ) : null}
         </header>
       ) : null}
 
@@ -105,7 +173,9 @@ export default function App() {
 
       {user && !vault ? (
         <section className="auto-unlock-state">
-          <h1>{vaultError ? "Encrypted data unavailable" : "Preparing encrypted workspace"}</h1>
+          <h1>
+            {vaultError ? "Encrypted data unavailable" : "Preparing encrypted workspace"}
+          </h1>
           <p>
             {vaultError ??
               "Creating or unlocking this browser's encrypted vault automatically."}
@@ -113,9 +183,22 @@ export default function App() {
         </section>
       ) : null}
 
-      {user && vault ? (
-        <ChatShell user={user} vault={vault} onLogout={handleLogout} />
-      ) : null}
+      {user && vault ? children(user, vault) : null}
     </main>
   );
+}
+
+function ShareRoute() {
+  const { kind, token } = useParams();
+  if (!isShareKind(kind) || !token) return <Navigate replace to="/" />;
+
+  return (
+    <main className="app-shell share-active">
+      <ShareViewer kind={kind} token={token} />
+    </main>
+  );
+}
+
+function isShareKind(value: string | undefined): value is ShareKind {
+  return value === "conversation" || value === "turn";
 }

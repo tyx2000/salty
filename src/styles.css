@@ -115,6 +115,9 @@ textarea {
 
 .app-shell.chat-active {
   background: #ffffff;
+  height: 100vh;
+  overflow: hidden;
+  position: relative;
 }
 
 .centered {
@@ -458,9 +461,8 @@ textarea {
   pointer-events: none;
   transform: translateY(8px);
   transition:
-    opacity 140ms ease,
-    transform 140ms ease,
-    visibility 140ms ease;
+    opacity 90ms ease,
+    transform 90ms ease;
   visibility: hidden;
   z-index: 14;
 }
@@ -611,6 +613,352 @@ textarea {
   gap: 22px;
 }
 
+.settings-page {
+  background: #ffffff;
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  inset: 0;
+  min-height: 100vh;
+  position: fixed;
+  z-index: 40;
+}
+
+.settings-sidebar {
+  align-content: start;
+  background: #f7f7f4;
+  border-right: 1px solid #e6e4df;
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.settings-back-link,
+.popover-action {
+  text-decoration: none;
+}
+
+.settings-back-link {
+  align-items: center;
+  border-radius: 8px;
+  color: #273244;
+  display: inline-flex;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 8px;
+  width: fit-content;
+}
+
+.settings-back-link:hover {
+  background: #eceae5;
+}
+
+.settings-account {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 4px;
+}
+
+.settings-account > div:last-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settings-account strong,
+.settings-popover-user strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-account span {
+  color: #687286;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-avatar {
+  align-items: center;
+  background: #ffffff;
+  border-radius: 999px;
+  box-shadow: var(--shadow-border);
+  color: #273244;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
+}
+
+.settings-tablist {
+  display: grid;
+  gap: 4px;
+}
+
+.settings-tab {
+  background: transparent;
+  color: #273244;
+  justify-content: flex-start;
+  min-height: 36px;
+  padding: 0 10px;
+  width: 100%;
+}
+
+.settings-tab:hover,
+.settings-tab.active {
+  background: #eceae5;
+  color: #202124;
+}
+
+.settings-main {
+  align-content: start;
+  display: grid;
+  justify-items: center;
+  min-width: 0;
+  overflow: auto;
+  padding: 32px;
+}
+
+.settings-panel {
+  display: grid;
+  gap: 20px;
+  max-width: 980px;
+  width: 100%;
+}
+
+.settings-panel.compact {
+  max-width: 720px;
+}
+
+.settings-panel .notice,
+.provider-settings-card .notice {
+  margin: 0;
+  max-width: none;
+  width: 100%;
+}
+
+.settings-panel-header {
+  align-items: end;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding-bottom: 6px;
+}
+
+.settings-panel-header div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.settings-panel-header span {
+  color: #697386;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.settings-panel-header h1 {
+  font-size: 28px;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.settings-panel-header > strong,
+.usage-summary strong {
+  color: #202124;
+  font-size: 18px;
+}
+
+.usage-summary {
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+}
+
+.usage-summary span {
+  color: #697386;
+  font-size: 13px;
+  font-weight: 500;
+  text-transform: none;
+}
+
+.usage-heatmap {
+  display: grid;
+  gap: 4px;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(7, 12px);
+  justify-self: center;
+  overflow-x: auto;
+  padding: 2px 0;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.heatmap-cell {
+  background: #ebedf0;
+  border-radius: 3px;
+  display: inline-block;
+  height: 12px;
+  width: 12px;
+}
+
+.heatmap-cell.level-1 {
+  background: #9be9a8;
+}
+
+.heatmap-cell.level-2 {
+  background: #40c463;
+}
+
+.heatmap-cell.level-3 {
+  background: #30a14e;
+}
+
+.heatmap-cell.level-4 {
+  background: #216e39;
+}
+
+.heatmap-legend {
+  align-items: center;
+  color: #697386;
+  display: inline-flex;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.usage-table {
+  display: grid;
+  gap: 4px;
+}
+
+.usage-table-row {
+  align-items: center;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(220px, 1fr) 140px 120px 80px;
+  min-height: 52px;
+  padding: 8px 10px;
+}
+
+.usage-table-row.header {
+  background: transparent;
+  color: #697386;
+  font-size: 12px;
+  font-weight: 700;
+  min-height: 38px;
+  text-transform: uppercase;
+}
+
+.usage-table-row:not(.header) {
+  background: #fafaf8;
+}
+
+.usage-table-row span {
+  min-width: 0;
+}
+
+.usage-table-row strong,
+.usage-table-row small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-table-row small {
+  color: #697386;
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.usage-empty {
+  color: #697386;
+  padding: 18px 0;
+}
+
+.provider-settings-list {
+  display: grid;
+  gap: 18px;
+}
+
+.provider-settings-card {
+  background: #fafaf8;
+  border: 0;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.provider-settings-card header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.provider-settings-card h3,
+.provider-settings-card p {
+  margin: 0;
+}
+
+.provider-settings-card p {
+  color: #697386;
+  font-size: 12px;
+}
+
+.settings-definition-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.settings-definition-list div,
+.settings-option-row,
+.shortcut-list div {
+  align-items: center;
+  background: #fafaf8;
+  border-radius: 8px;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 0 12px;
+}
+
+.settings-definition-list dt,
+.settings-option-row span,
+.shortcut-list span {
+  color: #697386;
+}
+
+.settings-definition-list dd {
+  color: #273244;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.shortcut-list {
+  display: grid;
+  gap: 8px;
+}
+
+.shortcut-list kbd {
+  background: #f1f0eb;
+  border-radius: 6px;
+  color: #273244;
+  font: inherit;
+  padding: 4px 8px;
+}
+
 .conversation-header {
   align-items: center;
   border-bottom: 1px solid #eeeeeb;
@@ -643,17 +991,6 @@ textarea {
   min-width: 0;
 }
 
-.conversation-meta span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.conversation-meta span:last-child {
-  font-variant-numeric: tabular-nums;
-}
-
 .messages {
   align-content: start;
   display: grid;
@@ -670,6 +1007,8 @@ textarea {
 .messages,
 .composer textarea,
 .settings-modal,
+.settings-main,
+.usage-heatmap,
 .markdown-message pre,
 .markdown-message table,
 .model-menu,
@@ -681,6 +1020,8 @@ textarea {
 .messages::-webkit-scrollbar,
 .composer textarea::-webkit-scrollbar,
 .settings-modal::-webkit-scrollbar,
+.settings-main::-webkit-scrollbar,
+.usage-heatmap::-webkit-scrollbar,
 .markdown-message pre::-webkit-scrollbar,
 .markdown-message table::-webkit-scrollbar,
 .model-menu::-webkit-scrollbar,
@@ -691,6 +1032,8 @@ textarea {
 .messages::-webkit-scrollbar-track,
 .composer textarea::-webkit-scrollbar-track,
 .settings-modal::-webkit-scrollbar-track,
+.settings-main::-webkit-scrollbar-track,
+.usage-heatmap::-webkit-scrollbar-track,
 .markdown-message pre::-webkit-scrollbar-track,
 .markdown-message table::-webkit-scrollbar-track,
 .model-menu::-webkit-scrollbar-track,
@@ -1034,18 +1377,28 @@ textarea {
   max-width: 100%;
 }
 
+.loading-shimmer-text,
 .thinking-indicator {
   background:
     linear-gradient(90deg, #8b95a7 0%, #111827 45%, #8b95a7 90%)
     0 0 / 220% 100%;
+  -webkit-background-clip: text;
   background-clip: text;
+  animation: thinking-shimmer 1.35s ease-in-out infinite;
   color: transparent;
+}
+
+.centered .loading-shimmer-text,
+.empty-state .loading-shimmer-text {
+  color: transparent;
+}
+
+.thinking-indicator {
   display: inline-flex;
   font-size: 13px;
   font-weight: 600;
   min-height: 28px;
   width: fit-content;
-  animation: thinking-shimmer 1.35s ease-in-out infinite;
 }
 
 .markdown-message {
@@ -1670,6 +2023,13 @@ textarea {
   position: relative;
 }
 
+.settings-menu .ghost-button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .settings-popover,
 .mobile-conversations-popover {
   background: #ffffff;
@@ -1760,6 +2120,7 @@ textarea {
 }
 
 .popover-action {
+  align-items: center;
   background: transparent;
   border-radius: 8px;
   color: #273244;
@@ -1768,6 +2129,7 @@ textarea {
   justify-content: flex-start;
   min-height: 32px;
   padding: 0 8px;
+  text-decoration: none;
 }
 
 .popover-action:hover {
@@ -1836,8 +2198,54 @@ textarea {
   }
 
   .unlock-layout,
-  .chat-layout {
+  .chat-layout,
+  .settings-page {
     grid-template-columns: 1fr;
+  }
+
+  .settings-page {
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 100dvh;
+  }
+
+  .settings-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid #e6e4df;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  .settings-account {
+    display: none;
+  }
+
+  .settings-tablist {
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .settings-tab {
+    flex: 0 0 auto;
+    width: auto;
+  }
+
+  .settings-main {
+    padding: 20px 16px;
+  }
+
+  .settings-panel-header {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .usage-summary {
+    justify-items: start;
+  }
+
+  .usage-table-row {
+    grid-template-columns: minmax(160px, 1fr) 92px 82px 48px;
   }
 
   .chat-layout {
@@ -1954,8 +2362,8 @@ textarea {
   }
 
   .conversation-meta {
-    flex-direction: column;
-    gap: 2px;
+    flex-direction: row;
+    gap: 8px;
     justify-content: center;
     text-align: right;
   }

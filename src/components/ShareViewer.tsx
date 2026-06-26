@@ -64,8 +64,8 @@ export function ShareViewer({ kind, token }: ShareViewerProps) {
       <div className="share-content">
         {loading ? (
           <div className="empty-state">
-            <h1>Opening share</h1>
-            <p>Decrypting this snapshot in your browser.</p>
+            <h1 className="loading-shimmer-text">Opening share</h1>
+            <p className="loading-shimmer-text">Decrypting this snapshot in your browser.</p>
           </div>
         ) : error ? (
           <div className="empty-state">

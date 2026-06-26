@@ -1,3 +1,4 @@
+import { memo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -5,7 +6,9 @@ type MarkdownMessageProps = {
   content: string;
 };
 
-export function MarkdownMessage({ content }: MarkdownMessageProps) {
+export const MarkdownMessage = memo(function MarkdownMessage({
+  content,
+}: MarkdownMessageProps) {
   const displayContent = balanceOpenCodeFence(content);
 
   return (
@@ -13,7 +16,7 @@ export function MarkdownMessage({ content }: MarkdownMessageProps) {
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayContent}</ReactMarkdown>
     </div>
   );
-}
+});
 
 function balanceOpenCodeFence(content: string) {
   const fenceCount = content.match(/```/g)?.length ?? 0;
