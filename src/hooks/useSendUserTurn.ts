@@ -126,7 +126,16 @@ export function useSendUserTurn({
   vault,
 }: UseSendUserTurnOptions) {
   const abortControllerRef = useRef<AbortController | null>(null);
+  const conversationIdRef = useRef(conversationId);
+  const defaultHistoryMessagesRef = useRef(defaultHistoryMessages);
+  const defaultModelRef = useRef(defaultModel);
+  const defaultProviderRef = useRef(defaultProvider);
   const statsTimerRef = useRef<number | undefined>(undefined);
+
+  conversationIdRef.current = conversationId;
+  defaultHistoryMessagesRef.current = defaultHistoryMessages;
+  defaultModelRef.current = defaultModel;
+  defaultProviderRef.current = defaultProvider;
 
   useEffect(() => {
     return () => {
@@ -147,12 +156,17 @@ export function useSendUserTurn({
     pendingAttachments = [],
     reusedAttachments = [],
     title,
-    historyMessages = defaultHistoryMessages,
-    turnProvider = defaultProvider,
-    turnModel = defaultModel,
+    historyMessages,
+    turnProvider,
+    turnModel,
     afterTurnSaved,
     busyLockAcquired = false,
   }: SendUserTurnOptions) {
+    const activeConversationId = conversationIdRef.current;
+    const resolvedHistoryMessages =
+      historyMessages ?? defaultHistoryMessagesRef.current;
+    const resolvedTurnProvider = turnProvider ?? defaultProviderRef.current;
+    const requestedTurnModel = turnModel ?? defaultModelRef.current;
     let lockHeld = busyLockAcquired;
     const releaseHeldBusyLock = () => {
       if (!lockHeld) return;
@@ -161,9 +175,9 @@ export function useSendUserTurn({
     };
 
     const turnConfig = resolveTurnConfig({
-      model: turnModel,
+      model: requestedTurnModel,
       pendingAttachments,
-      provider: turnProvider,
+      provider: resolvedTurnProvider,
       providerKeys,
       reusedAttachments,
     });
@@ -188,7 +202,7 @@ export function useSendUserTurn({
       turnDraft = await createChatTurnDraft({
         parts,
         pendingAttachments,
-        provider: turnProvider,
+        provider: resolvedTurnProvider,
         reusedAttachments,
         model: resolvedTurnModel,
       });
@@ -208,7 +222,13 @@ export function useSendUserTurn({
       userMessage,
     } = turnDraft;
 
-    setMessages([...historyMessages, userMessage]);
+    if (!activeConversationId && resolvedHistoryMessages.length > 0) {
+      onError("Conversation state is still syncing. Please try sending again.");
+      releaseHeldBusyLock();
+      return false;
+    }
+
+    setMessages([...resolvedHistoryMessages, userMessage]);
 
     let statsTimer: number | undefined;
     let assistantPersisted = false;
@@ -218,17 +238,22 @@ export function useSendUserTurn({
     let latestResponseStats: ChatResponseStats | undefined;
     const usageRecorder = createUsageEventRecorder({
       model: resolvedTurnModel,
-      provider: turnProvider,
+      provider: resolvedTurnProvider,
       vault,
     });
 
     try {
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
-      const isNewConversation = !conversationId;
+      const isNewConversation = !activeConversationId;
       const nextConversationId =
-        conversationId ??
-        (await createConversation(vault, title.slice(0, 80), turnProvider, resolvedTurnModel));
+        activeConversationId ??
+        (await createConversation(
+          vault,
+          title.slice(0, 80),
+          resolvedTurnProvider,
+          resolvedTurnModel,
+        ));
       usageRecorder.setConversationId(nextConversationId);
       if (isNewConversation) createdConversationId = nextConversationId;
       setConversationId(nextConversationId);
@@ -243,14 +268,26 @@ export function useSendUserTurn({
           : bumpConversation(current, nextConversationId),
       );
 
-      await saveMessage(vault, completedUserMessage, nextConversationId, turnProvider, {
-        model: resolvedTurnModel,
-        pendingAttachments,
-      });
+      await saveMessage(
+        vault,
+        completedUserMessage,
+        nextConversationId,
+        resolvedTurnProvider,
+        {
+          model: resolvedTurnModel,
+          pendingAttachments,
+        },
+      );
       userPersisted = true;
-      await saveMessage(vault, assistantMessage, nextConversationId, turnProvider, {
-        model: resolvedTurnModel,
-      });
+      await saveMessage(
+        vault,
+        assistantMessage,
+        nextConversationId,
+        resolvedTurnProvider,
+        {
+          model: resolvedTurnModel,
+        },
+      );
       assistantPersisted = true;
       setMessages((current) => [
         ...current.map((message) =>
@@ -272,13 +309,13 @@ export function useSendUserTurn({
       statsTimerRef.current = statsTimer;
 
       const { text: assistantText, stats } = await streamChat({
-        provider: turnProvider,
+        provider: resolvedTurnProvider,
         model: resolvedTurnModel,
         apiKey,
         thinkingMode,
         reasoningEffort,
         messages: buildStreamMessages(
-          historyMessages,
+          resolvedHistoryMessages,
           completedUserMessage,
           requestAttachmentMap,
           loadGlobalInstructions(),
@@ -305,7 +342,7 @@ export function useSendUserTurn({
           vault,
           completedAssistantMessage,
           nextConversationId,
-          turnProvider,
+          resolvedTurnProvider,
           { model: resolvedTurnModel },
         );
         assistantContentPersisted = true;
@@ -367,7 +404,7 @@ export function useSendUserTurn({
         assistantContentPersisted,
         assistantMessage,
         assistantPersisted,
-        conversationId,
+        conversationId: activeConversationId,
         createdConversationId,
         navigateHome,
         setConversationId,

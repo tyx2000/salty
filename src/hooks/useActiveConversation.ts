@@ -39,13 +39,17 @@ export function useActiveConversation({
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
+  const loadRequestRef = useRef(0);
   const openingConversationRef = useRef<string | null>(null);
 
   const startNewConversation = useCallback(
     (updateRoute = true) => {
+      loadRequestRef.current += 1;
+      openingConversationRef.current = null;
       if (updateRoute) navigate("/");
       setConversationId(null);
       setMessages([]);
+      setLoadingMessages(false);
       onError(null);
     },
     [navigate, onError],
@@ -59,6 +63,8 @@ export function useActiveConversation({
       }
       if (openingConversationRef.current === nextConversationId) return;
 
+      const loadRequestId = loadRequestRef.current + 1;
+      loadRequestRef.current = loadRequestId;
       openingConversationRef.current = nextConversationId;
       if (updateRoute) navigate(`/chat/${encodeURIComponent(nextConversationId)}`);
       setConversationId(nextConversationId);
@@ -67,26 +73,41 @@ export function useActiveConversation({
 
       try {
         const loadedMessages = await loadMessages(vault, nextConversationId);
-        setMessages(
+        const settledMessages =
           busyRef.current
             ? loadedMessages
             : await settleInterruptedAssistantMessages(
                 vault,
                 loadedMessages,
                 nextConversationId,
-              ),
-        );
+              );
+        if (
+          loadRequestRef.current !== loadRequestId ||
+          openingConversationRef.current !== nextConversationId
+        ) {
+          return;
+        }
+        setMessages(settledMessages);
       } catch (unknownError) {
+        if (
+          loadRequestRef.current !== loadRequestId ||
+          openingConversationRef.current !== nextConversationId
+        ) {
+          return;
+        }
         onError(
           unknownError instanceof Error
             ? unknownError.message
             : "Unable to load messages.",
         );
       } finally {
-        if (openingConversationRef.current === nextConversationId) {
+        if (
+          loadRequestRef.current === loadRequestId &&
+          openingConversationRef.current === nextConversationId
+        ) {
           openingConversationRef.current = null;
+          setLoadingMessages(false);
         }
-        setLoadingMessages(false);
       }
     },
     [busyRef, conversationId, navigate, onError, vault],

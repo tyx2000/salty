@@ -9,6 +9,27 @@ export type ColorSchemeId =
   | "orchid"
   | "copper"
   | "ocean"
+  | "ivory"
+  | "snow"
+  | "ghostWhite"
+  | "whiteSmoke"
+  | "seashell"
+  | "floralWhite"
+  | "oldLace"
+  | "linen"
+  | "antiqueWhite"
+  | "beige"
+  | "mintCream"
+  | "lavenderBlush"
+  | "honeydew"
+  | "aliceBlue"
+  | "cornsilk"
+  | "lemonChiffon"
+  | "azure"
+  | "lightGoldenrodYellow"
+  | "lightGray"
+  | "isabelline"
+  | "gainsboro"
   | "custom";
 
 export type FontFamilyId = "system" | "inter" | "serif" | "mono";
@@ -356,6 +377,31 @@ export const colorSchemes: ColorScheme[] = [
       "--app-user-bubble": "#d9eeee",
     },
   },
+  buildImageColorScheme("ivory", "Ivory", "#fffff0"),
+  buildImageColorScheme("snow", "Snow", "#fffafa"),
+  buildImageColorScheme("ghostWhite", "Ghost White", "#f8f8ff"),
+  buildImageColorScheme("whiteSmoke", "White Smoke", "#f5f5f5"),
+  buildImageColorScheme("seashell", "Seashell", "#fff5ee"),
+  buildImageColorScheme("floralWhite", "Floral White", "#fffaf0"),
+  buildImageColorScheme("oldLace", "Old Lace", "#fdf5e6"),
+  buildImageColorScheme("linen", "Linen", "#faf0e6"),
+  buildImageColorScheme("antiqueWhite", "Antique White", "#faebd7"),
+  buildImageColorScheme("beige", "Beige", "#f5f5dc"),
+  buildImageColorScheme("mintCream", "Mint Cream", "#f5fffa"),
+  buildImageColorScheme("lavenderBlush", "Lavender Blush", "#fff0f5"),
+  buildImageColorScheme("honeydew", "Honeydew", "#f0fff0"),
+  buildImageColorScheme("aliceBlue", "Alice Blue", "#f0f8ff"),
+  buildImageColorScheme("cornsilk", "Cornsilk", "#fff8dc"),
+  buildImageColorScheme("lemonChiffon", "Lemon Chiffon", "#fffacd"),
+  buildImageColorScheme("azure", "Azure", "#f0ffff"),
+  buildImageColorScheme(
+    "lightGoldenrodYellow",
+    "Light Goldenrod Yellow",
+    "#fafad2",
+  ),
+  buildImageColorScheme("lightGray", "Light Gray", "#d3d3d3"),
+  buildImageColorScheme("isabelline", "Isabelline", "#f4f0ec"),
+  buildImageColorScheme("gainsboro", "Gainsboro", "#dcdcdc"),
   {
     id: "custom",
     label: "Custom",
@@ -404,42 +450,42 @@ export const languageStyles: LanguageStyleOption[] = [
     label: "专业可靠",
     description: "结构清晰，判断稳健，适合默认工作场景。",
     instruction:
-      "使用专业可靠的语言风格：表达准确、克制、结构清晰，避免夸张和随意调侃。",
+      "使用“专业可靠”的回答风格：先给清晰结论，再给依据和步骤；措辞准确、克制、可信，避免玩笑、夸张和情绪化表达。",
   },
   {
     id: "friendly",
     label: "亲和友善",
     description: "语气更温和，解释更照顾阅读感受。",
     instruction:
-      "使用亲和友善的语言风格：语气温和，解释耐心，保持准确，不使用空泛鼓励。",
+      "使用“亲和友善”的回答风格：语气温和、有耐心，适当解释背景和原因；保持准确，不使用空泛鼓励，不显得冷硬。",
   },
   {
     id: "direct",
     label: "直言不讳",
     description: "先给结论，直接指出问题和取舍。",
     instruction:
-      "使用直言不讳的语言风格：先给结论，明确指出问题、风险和取舍，避免绕弯。",
+      "使用“直言不讳”的回答风格：第一句直接给结论；明确指出问题、风险和取舍；删掉客套、铺垫和模糊表述。",
   },
   {
     id: "imaginative",
     label: "天马行空",
     description: "更开放，适合创意和探索性任务。",
     instruction:
-      "使用天马行空的语言风格：在保持事实准确的前提下，允许更开放、更有想象力的表达和方案。",
+      "使用“天马行空”的回答风格：在事实准确的前提下，表达更有画面感和创造性；给出更开放的方案、类比或发散视角。",
   },
   {
     id: "efficient",
     label: "高效务实",
     description: "减少铺垫，优先给可执行步骤。",
     instruction:
-      "使用高效务实的语言风格：减少铺垫，优先给可执行结论、步骤和代码层面的建议。",
+      "使用“高效务实”的回答风格：减少解释和修饰，优先给可执行动作、代码层面建议和下一步；使用短句和紧凑结构。",
   },
   {
     id: "roast",
     label: "犀利吐槽",
     description: "更锋利，但不做人身攻击。",
     instruction:
-      "使用犀利吐槽的语言风格：可以尖锐地评价方案和代码问题，但不要人身攻击，不要影响专业判断。",
+      "使用“犀利吐槽”的回答风格：可以用尖锐、带一点吐槽感的方式评价方案和代码问题；吐槽只针对问题本身，不做人身攻击，仍要给出专业修正建议。",
   },
 ];
 
@@ -507,7 +553,12 @@ export function composeGlobalInstructions(preferences: UserPreferences) {
     : "记忆已关闭：不要使用跨会话记忆，只依据当前对话、当前文件上下文和用户显式指令回答。";
   const globalInstructions = normalized.globalInstructions.trim();
 
-  return [style.instruction, memoryInstruction, globalInstructions]
+  const styleInstruction = [
+    "语言风格要求（高优先级）：下面的风格必须在每次回答中明显体现；除非用户临时要求另一种语气，否则不要忽略它。",
+    style.instruction,
+  ].join("\n");
+
+  return [styleInstruction, memoryInstruction, globalInstructions]
     .filter(Boolean)
     .join("\n\n");
 }
@@ -586,6 +637,32 @@ function buildCustomColorVars(colors: CustomColorScheme) {
     "--app-hover": `color-mix(in srgb, ${colors.muted} 72%, ${colors.accent})`,
     "--app-accent": colors.accent,
     "--app-user-bubble": colors.user,
+  };
+}
+
+function buildImageColorScheme(
+  id: ColorSchemeId,
+  label: string,
+  canvas: string,
+): ColorScheme {
+  return {
+    id,
+    label,
+    description: canvas.toUpperCase(),
+    swatches: {
+      accent: "#34306f",
+      canvas,
+      muted: `color-mix(in srgb, ${canvas} 84%, #ffffff)`,
+      user: `color-mix(in srgb, ${canvas} 80%, #e7dfc8)`,
+    },
+    vars: {
+      "--app-canvas": canvas,
+      "--app-muted": `color-mix(in srgb, ${canvas} 84%, #ffffff)`,
+      "--app-soft": `color-mix(in srgb, ${canvas} 80%, #e7dfc8)`,
+      "--app-hover": `color-mix(in srgb, ${canvas} 72%, #d7cfb7)`,
+      "--app-accent": "#34306f",
+      "--app-user-bubble": `color-mix(in srgb, ${canvas} 80%, #e7dfc8)`,
+    },
   };
 }
 

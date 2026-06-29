@@ -9,10 +9,10 @@
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
   --app-font-size: 13px;
-  --surface: #ffffff;
-  --surface-muted: #f7f7f4;
-  --surface-hover: #eceae5;
-  --surface-soft: #f1f0eb;
+  --surface: var(--app-canvas);
+  --surface-muted: var(--app-muted);
+  --surface-hover: var(--app-hover);
+  --surface-soft: var(--app-soft);
   --ink: #18202f;
   --ink-muted: #687286;
   --shadow-border:
@@ -95,7 +95,7 @@ label {
 input,
 select,
 textarea {
-  background: #ffffff;
+  background: var(--app-canvas);
   border: 1px solid #d8dde7;
   border-radius: 8px;
   color: #18202f;
@@ -159,7 +159,7 @@ textarea {
 
 .topbar {
   align-items: center;
-  background: #ffffff;
+  background: var(--app-canvas);
   border-bottom: 0;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.06);
   display: flex;
@@ -210,7 +210,7 @@ textarea {
 
 .auth-panel,
 .side-panel {
-  background: #ffffff;
+  background: var(--app-canvas);
   border: 0;
   border-radius: 8px;
   box-shadow: var(--shadow-border);
@@ -364,7 +364,7 @@ textarea {
 }
 
 .new-chat-button {
-  background: #ffffff;
+  background: var(--app-canvas);
   box-shadow: var(--shadow-border);
   color: #202124;
   justify-content: flex-start;
@@ -444,7 +444,7 @@ textarea {
 }
 
 .conversation-rename-input {
-  background: #ffffff;
+  background: var(--app-canvas);
   border: 1px solid #4f6bff;
   border-radius: 6px;
   box-shadow: 0 0 0 3px rgba(79, 107, 255, 0.12);
@@ -457,7 +457,7 @@ textarea {
 }
 
 .context-menu {
-  background: #ffffff;
+  background: var(--app-canvas);
   border: 0;
   border-radius: 14px;
   box-shadow: var(--shadow-elevated);
@@ -498,7 +498,7 @@ textarea {
 }
 
 .context-menu-item:hover {
-  background: #f1f0eb;
+  background: var(--app-soft);
 }
 
 .context-menu-item.danger {
@@ -578,7 +578,7 @@ textarea {
 }
 
 .share-page {
-  background: #ffffff;
+  background: var(--app-canvas);
   min-height: 100vh;
 }
 
@@ -692,7 +692,7 @@ textarea {
 
 .settings-avatar {
   align-items: center;
-  background: #ffffff;
+  background: var(--app-canvas);
   border-radius: 999px;
   box-shadow: var(--shadow-border);
   color: var(--app-accent);
@@ -798,7 +798,7 @@ textarea {
 
 .profile-identity {
   align-items: start;
-  background: color-mix(in srgb, var(--app-muted) 56%, #ffffff);
+  background: color-mix(in srgb, var(--app-muted) 56%, var(--app-canvas));
   border-radius: 8px;
   display: grid;
   gap: 12px;
@@ -900,7 +900,7 @@ textarea {
 }
 
 .usage-table-row:not(.header) {
-  background: #fafaf8;
+  background: color-mix(in srgb, var(--app-muted) 56%, var(--app-canvas));
 }
 
 .usage-table-row span {
@@ -932,7 +932,7 @@ textarea {
 }
 
 .provider-settings-card {
-  background: color-mix(in srgb, var(--app-muted) 56%, #ffffff);
+  background: color-mix(in srgb, var(--app-muted) 56%, var(--app-canvas));
   border: 0;
   border-radius: 8px;
   display: grid;
@@ -963,7 +963,7 @@ textarea {
 }
 
 .settings-copy {
-  background: color-mix(in srgb, var(--app-muted) 56%, #ffffff);
+  background: color-mix(in srgb, var(--app-muted) 56%, var(--app-canvas));
   border-radius: 8px;
   color: #4b5563;
   line-height: 1.6;
@@ -1005,7 +1005,7 @@ textarea {
 .settings-option-row,
 .shortcut-list div {
   align-items: center;
-  background: color-mix(in srgb, var(--app-muted) 56%, #ffffff);
+  background: color-mix(in srgb, var(--app-muted) 56%, var(--app-canvas));
   border-radius: 8px;
   display: flex;
   gap: 16px;
@@ -1054,7 +1054,7 @@ textarea {
 
 .palette-option {
   align-items: center;
-  background: color-mix(in srgb, var(--app-muted) 56%, #ffffff);
+  background: color-mix(in srgb, var(--app-muted) 56%, var(--app-canvas));
   border-radius: 8px;
   color: #273244;
   display: grid;
@@ -1102,7 +1102,7 @@ textarea {
 }
 
 .custom-palette-controls {
-  background: color-mix(in srgb, var(--app-muted) 56%, #ffffff);
+  background: color-mix(in srgb, var(--app-muted) 56%, var(--app-canvas));
   border-radius: 8px;
   display: grid;
   gap: 12px;
@@ -1130,7 +1130,7 @@ textarea {
 
 .color-control {
   align-items: center;
-  background: #ffffff;
+  background: var(--app-canvas);
   border-radius: 8px;
   box-shadow: var(--shadow-border);
   display: flex;
@@ -1166,7 +1166,7 @@ textarea {
 .settings-control-grid select,
 .settings-textarea,
 .shortcut-key-input {
-  background: #ffffff;
+  background: var(--app-canvas);
   border: 1px solid #d8d6d0;
   border-radius: 8px;
   color: #273244;
@@ -1183,7 +1183,7 @@ textarea {
 }
 
 .font-preview {
-  background: color-mix(in srgb, var(--app-muted) 56%, #ffffff);
+  background: color-mix(in srgb, var(--app-muted) 56%, var(--app-canvas));
   border-radius: 8px;
   display: grid;
   gap: 4px;
@@ -1217,7 +1217,7 @@ textarea {
 }
 
 .switch-control span::after {
-  background: #ffffff;
+  background: var(--app-canvas);
   border-radius: 999px;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.18);
   content: "";
@@ -1245,20 +1245,28 @@ textarea {
 }
 
 .language-style-grid {
+  align-items: stretch;
   display: grid;
   gap: 10px;
+  grid-auto-rows: 1fr;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .language-style-option {
-  background: color-mix(in srgb, var(--app-muted) 56%, #ffffff);
+  align-content: center;
+  align-items: start;
+  background: color-mix(in srgb, var(--app-muted) 56%, var(--app-canvas));
   border-radius: 8px;
   color: #273244;
   display: grid;
   gap: 5px;
+  grid-template-rows: 22px minmax(0, 1fr);
+  justify-content: stretch;
+  justify-items: start;
   min-height: 82px;
   padding: 12px;
   text-align: left;
+  width: 100%;
 }
 
 .language-style-option:hover,
@@ -1268,7 +1276,15 @@ textarea {
 
 .language-style-option span {
   color: #697386;
+  display: block;
   line-height: 1.45;
+}
+
+.language-style-option strong {
+  align-items: center;
+  display: flex;
+  line-height: 1.3;
+  min-height: 22px;
 }
 
 .settings-textarea {
@@ -1299,7 +1315,7 @@ textarea {
 
 .shortcut-config-row {
   align-items: center;
-  background: color-mix(in srgb, var(--app-muted) 56%, #ffffff);
+  background: color-mix(in srgb, var(--app-muted) 56%, var(--app-canvas));
   border-radius: 8px;
   display: grid;
   gap: 12px;
@@ -1426,7 +1442,7 @@ textarea {
 .model-menu::-webkit-scrollbar-thumb,
 .model-list::-webkit-scrollbar-thumb {
   background: #d8d6d0;
-  border: 3px solid #ffffff;
+  border: 3px solid var(--app-canvas);
   border-radius: 999px;
 }
 
@@ -1721,7 +1737,7 @@ textarea {
 }
 
 .attachment-download {
-  background: #ffffff;
+  background: var(--app-canvas);
   border-radius: 999px;
   color: #273244;
   flex: 0 0 auto;
@@ -1733,7 +1749,7 @@ textarea {
 }
 
 .attachment-download:hover {
-  background: #eceae5;
+  background: var(--app-hover);
 }
 
 .json-part {
@@ -2141,7 +2157,7 @@ textarea {
 
 .model-menu,
 .request-menu {
-  background: #ffffff;
+  background: var(--app-canvas);
   border: 0;
   border-radius: 14px;
   bottom: calc(100% + 8px);
@@ -2197,7 +2213,7 @@ textarea {
 .model-menu-item.active,
 .request-menu-item:hover,
 .request-menu-item.active {
-  background: #f1f0eb;
+  background: var(--app-soft);
 }
 
 .model-menu-item span,
@@ -2278,7 +2294,7 @@ textarea {
 
 .settings-modal,
 .confirm-modal {
-  background: #ffffff;
+  background: var(--app-canvas);
   border-radius: 14px;
   box-shadow: var(--shadow-elevated);
   display: grid;
@@ -2362,7 +2378,7 @@ textarea {
 }
 
 .tab-button.active {
-  background: #f1f0eb;
+  background: var(--app-soft);
   box-shadow: none;
   color: #202124;
 }
@@ -2431,7 +2447,7 @@ textarea {
 }
 
 .model-list-item:hover {
-  background: #f1f0eb;
+  background: var(--app-soft);
 }
 
 .model-list-item.hidden-model {
@@ -2478,7 +2494,7 @@ textarea {
 
 .settings-popover,
 .mobile-conversations-popover {
-  background: #ffffff;
+  background: var(--app-canvas);
   border: 0;
   border-radius: 14px;
   bottom: calc(100% + 8px);
@@ -2534,7 +2550,7 @@ textarea {
 
 .mobile-conversation-item:hover,
 .mobile-conversation-item.active {
-  background: #f1f0eb;
+  background: var(--app-soft);
 }
 
 .mobile-conversation-item span {
@@ -2545,7 +2561,7 @@ textarea {
 }
 
 .settings-popover-user {
-  background: #f7f7f4;
+  background: var(--app-muted);
   border-radius: 8px;
   display: grid;
   gap: 7px;
@@ -2579,7 +2595,7 @@ textarea {
 }
 
 .popover-action:hover {
-  background: #f1f0eb;
+  background: var(--app-soft);
 }
 
 .spin {
