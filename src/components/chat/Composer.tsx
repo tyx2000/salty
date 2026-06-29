@@ -48,8 +48,14 @@ type ComposerProps = {
   onDraftKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   /** Selects a provider:model value from the model picker. */
   onModelChange: (value: string) => void;
+  /** Removes the currently queued text draft. */
+  onDeleteQueuedDraft: () => void;
+  /** Stores text for the next turn while a response is active. */
+  onQueueDraft: (draft: string) => boolean;
   /** Selects the reasoning effort for the next request. */
   onReasoningEffortChange: (value: ReasoningEffort) => void;
+  /** Stops the active response so queued text can send next. */
+  onSteerQueuedDraft: () => void;
   /** Submits current local draft/files and returns true when Composer should clear them. */
   onSubmit: (payload: { draft: string; files: File[] }) => Promise<boolean>;
   /** Shows or hides the model picker. */
@@ -76,6 +82,8 @@ type ComposerProps = {
   selectedSupportsAttachments: boolean;
   /** Current thinking mode selection. */
   thinkingMode: ThinkingMode;
+  /** Text waiting to send after the active response finishes. */
+  queuedDraft: string | null;
 };
 
 /** Displays the chat input, attachment button, request controls, and send/stop button. */
@@ -87,7 +95,10 @@ export function Composer({
   modelMenuRef,
   onDraftKeyDown,
   onModelChange,
+  onDeleteQueuedDraft,
+  onQueueDraft,
   onReasoningEffortChange,
+  onSteerQueuedDraft,
   onSubmit,
   onToggleModelMenu,
   onToggleReasoningMenu,
@@ -101,22 +112,36 @@ export function Composer({
   selectedModelValue,
   selectedSupportsAttachments,
   thinkingMode,
+  queuedDraft,
 }: ComposerProps) {
   const [draft, setDraft] = useState("");
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!draft.trim() && pendingFiles.length === 0) return;
+    const submittedDraft = draft.trim();
+
+    if (busy) {
+      if (!submittedDraft) return;
+      if (!onQueueDraft(submittedDraft)) return;
+      setDraft("");
+      return;
+    }
+
+    if (!submittedDraft && pendingFiles.length === 0) return;
+
+    const submittedFiles = pendingFiles;
+    setDraft("");
+    setPendingFiles([]);
 
     const shouldClear = await onSubmit({
       draft,
-      files: pendingFiles,
+      files: submittedFiles,
     });
-    if (!shouldClear) return;
+    if (shouldClear) return;
 
-    setDraft("");
-    setPendingFiles([]);
+    setDraft(draft);
+    setPendingFiles(submittedFiles);
   }
 
   function handleAddPendingFiles(files: File[]) {
@@ -130,14 +155,48 @@ export function Composer({
     );
   }
 
+  function handleEditQueuedDraft() {
+    if (!queuedDraft) return;
+    setDraft(queuedDraft);
+    onDeleteQueuedDraft();
+  }
+
+  const hasDraftText = draft.trim().length > 0;
+  const sendButtonMode = busy && !hasDraftText ? "stop" : "send";
+
   return (
     <form className="composer" onSubmit={handleSubmit}>
+      {queuedDraft ? (
+        <div className="queued-draft">
+          <span>{queuedDraft}</span>
+          <div className="queued-draft-actions" aria-label="Queued draft actions">
+            <button
+              disabled={!busy}
+              onClick={onSteerQueuedDraft}
+              type="button"
+            >
+              Steer
+            </button>
+            <button onClick={handleEditQueuedDraft} type="button">
+              Edit
+            </button>
+            <button
+              className="queued-draft-delete"
+              onClick={onDeleteQueuedDraft}
+              type="button"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      ) : null}
       <div className="composer-box">
         <PendingAttachments
           files={pendingFiles}
           onRemove={handleRemovePendingFile}
         />
         <textarea
+          data-composer-input="true"
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={onDraftKeyDown}
           placeholder="Ask anything..."
@@ -190,8 +249,12 @@ export function Composer({
             thinkingMode={thinkingMode}
           />
           <SendButton
-            busy={busy}
-            disabled={!busy && !draft.trim() && pendingFiles.length === 0}
+            disabled={
+              sendButtonMode === "send" &&
+              !hasDraftText &&
+              pendingFiles.length === 0
+            }
+            mode={sendButtonMode}
             onStopResponse={onStopResponse}
           />
         </div>

@@ -14,6 +14,8 @@ type UseMessageViewportOptions = {
   busy: boolean;
   /** Active conversation id used to decrypt attachment previews. */
   conversationId: string | null;
+  /** Whether the conversation catalog is still loading. */
+  loadingConversations: boolean;
   /** Whether message loading is in progress. */
   loadingMessages: boolean;
   /** Rendered messages; changes drive auto-scroll and resize observation. */
@@ -29,6 +31,7 @@ type UseMessageViewportOptions = {
 export function useMessageViewport({
   busy,
   conversationId,
+  loadingConversations,
   loadingMessages,
   messages,
   vault,
@@ -55,11 +58,62 @@ export function useMessageViewport({
 
   useEffect(() => {
     const node = messagesRef.current;
+    if (
+      !node ||
+      loadingConversations ||
+      loadingMessages ||
+      messages.length === 0
+    ) {
+      return;
+    }
+
+    autoScrollRef.current = true;
+    let cancelled = false;
+    let frame = 0;
+    let timeout: number | undefined;
+
+    const scrollToBottom = () => {
+      node.scrollTop = node.scrollHeight;
+    };
+
+    const settleScroll = (remainingFrames: number) => {
+      frame = requestAnimationFrame(() => {
+        if (cancelled) return;
+
+        scrollToBottom();
+        if (remainingFrames > 0) {
+          settleScroll(remainingFrames - 1);
+        } else {
+          timeout = window.setTimeout(scrollToBottom, 80);
+        }
+      });
+    };
+
+    settleScroll(2);
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+      if (timeout !== undefined) window.clearTimeout(timeout);
+    };
+  }, [
+    conversationId,
+    loadingConversations,
+    loadingMessages,
+    messages.length,
+  ]);
+
+  useEffect(() => {
+    const node = messagesRef.current;
     if (!node) return;
 
     const scrollToEnd = (behavior: ScrollBehavior = "instant") => {
       if (!autoScrollRef.current) return;
-      node.scrollTo({ top: node.scrollHeight, behavior });
+      if (behavior === "instant") {
+        node.scrollTop = node.scrollHeight;
+      } else {
+        node.scrollTo({ top: node.scrollHeight, behavior });
+      }
     };
 
     // Instant scroll on content changes avoids racing with scroll animations

@@ -1,4 +1,9 @@
-import type { KeyboardEvent, MouseEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  type KeyboardEvent,
+  type MouseEvent,
+} from "react";
 import type { ConversationListItem } from "@/lib/conversations";
 
 /** Props for rendering conversation rows in the sidebar or mobile popover. */
@@ -30,6 +35,16 @@ export function ConversationList({
   variant,
 }: ConversationListProps) {
   const isPopover = variant === "popover";
+  const activeRowRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (isPopover || !activeConversationId) return;
+
+    activeRowRef.current?.scrollIntoView({
+      block: "nearest",
+      inline: "nearest",
+    });
+  }, [activeConversationId, conversations.length, isPopover]);
 
   function openContextMenu(
     conversation: ConversationListItem,
@@ -109,6 +124,7 @@ export function ConversationList({
           <div
             className={active ? "conversation-row active" : "conversation-row"}
             key={conversation.id}
+            ref={active ? activeRowRef : undefined}
             onContextMenu={(event) => handleContextMenu(event, conversation)}
             onKeyDown={(event) => handleRowKeyDown(event, conversation)}
             role="button"

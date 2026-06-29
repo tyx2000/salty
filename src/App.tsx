@@ -5,6 +5,7 @@ import {
   Route,
   Routes,
   useLocation,
+  useNavigate,
   useParams,
 } from "react-router";
 import { LogOut, ShieldCheck } from "lucide-react";
@@ -15,6 +16,16 @@ import { ShareViewer } from "./components/ShareViewer";
 import { env } from "./lib/env";
 import type { ShareKind } from "./lib/shares";
 import { supabase } from "./lib/supabase";
+import {
+  applyUserPreferences,
+  colorSchemes,
+  fontSizes,
+  languageStyles,
+  loadUserPreferences,
+  saveUserPreferences,
+  shortcutActions,
+  type ShortcutActionId,
+} from "./lib/userPreferences";
 import { autoUnlockVault, forgetVault, type UnlockedVault } from "./lib/vault";
 
 export default function App() {
@@ -22,6 +33,10 @@ export default function App() {
   const [vault, setVault] = useState<UnlockedVault | null>(null);
   const [loadingSession, setLoadingSession] = useState(true);
   const [vaultError, setVaultError] = useState<string | null>(null);
+
+  useEffect(() => {
+    applyUserPreferences(loadUserPreferences());
+  }, []);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -118,11 +133,14 @@ function AuthenticatedWorkspace({
   vault: UnlockedVault;
 }) {
   const location = useLocation();
+  const navigate = useNavigate();
   const settingsMatch = location.pathname.match(/^\/settings(?:\/([^/]+))?$/);
   const knownAppRoute =
     location.pathname === "/" ||
     /^\/chat\/[^/]+$/.test(location.pathname) ||
     settingsMatch;
+
+  useConfiguredShortcuts(navigate);
 
   if (!knownAppRoute) return <Navigate replace to="/" />;
 
@@ -131,6 +149,163 @@ function AuthenticatedWorkspace({
       <ChatShell onLogout={onLogout} user={user} vault={vault} />
       {settingsMatch ? <SettingsPage user={user} vault={vault} /> : null}
     </>
+  );
+}
+
+function useConfiguredShortcuts(navigate: ReturnType<typeof useNavigate>) {
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented) return;
+      if (isEditableShortcutTarget(event.target) && !hasCommandModifier(event)) {
+        return;
+      }
+
+      const preferences = loadUserPreferences();
+      const action = shortcutActions.find((item) => {
+        const shortcut = preferences.shortcuts[item.id];
+        return shortcut.enabled && shortcutMatches(event, shortcut.keys);
+      });
+      if (!action) return;
+
+      event.preventDefault();
+      runShortcutAction(action.id, navigate);
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [navigate]);
+}
+
+function runShortcutAction(
+  actionId: ShortcutActionId,
+  navigate: ReturnType<typeof useNavigate>,
+) {
+  const preferences = loadUserPreferences();
+
+  if (actionId === "openSettings") {
+    navigate("/settings");
+    return;
+  }
+
+  if (actionId === "newChat") {
+    navigate("/");
+    window.dispatchEvent(new Event("salty:new-chat"));
+    return;
+  }
+
+  if (actionId === "toggleColorScheme") {
+    const currentIndex = colorSchemes.findIndex(
+      (scheme) => scheme.id === preferences.colorScheme,
+    );
+    const nextScheme = colorSchemes[(currentIndex + 1) % colorSchemes.length];
+    const nextPreferences = {
+      ...preferences,
+      colorScheme: nextScheme.id,
+    };
+    saveUserPreferences(nextPreferences);
+    applyUserPreferences(nextPreferences);
+    return;
+  }
+
+  if (actionId === "cycleLanguageStyle") {
+    const currentIndex = languageStyles.findIndex(
+      (style) => style.id === preferences.languageStyle,
+    );
+    const nextStyle =
+      languageStyles[(currentIndex + 1) % languageStyles.length] ??
+      languageStyles[0];
+    saveUserPreferences({
+      ...preferences,
+      languageStyle: nextStyle.id,
+    });
+    return;
+  }
+
+  if (actionId === "increaseFontSize" || actionId === "decreaseFontSize") {
+    const currentIndex = fontSizes.findIndex(
+      (fontSize) => fontSize.id === preferences.fontSize,
+    );
+    const offset = actionId === "increaseFontSize" ? 1 : -1;
+    const nextIndex = Math.max(
+      0,
+      Math.min(fontSizes.length - 1, currentIndex + offset),
+    );
+    const nextPreferences = {
+      ...preferences,
+      fontSize: fontSizes[nextIndex].id,
+    };
+    saveUserPreferences(nextPreferences);
+    applyUserPreferences(nextPreferences);
+    return;
+  }
+
+  if (actionId === "focusComposer") {
+    document
+      .querySelector<HTMLTextAreaElement>("[data-composer-input='true']")
+      ?.focus();
+  }
+}
+
+function shortcutMatches(event: KeyboardEvent, shortcutText: string) {
+  const tokens = tokenizeShortcut(shortcutText);
+  if (tokens.length === 0) return false;
+
+  const modifiers = new Set(tokens.filter(isModifierToken));
+  const keyTokens = tokens.filter((token) => !isModifierToken(token));
+  const expectedKey = keyTokens[keyTokens.length - 1];
+
+  if (!expectedKey) return false;
+  if (modifiers.has("cmd") !== event.metaKey) return false;
+  if (modifiers.has("ctrl") !== event.ctrlKey) return false;
+  if (modifiers.has("alt") !== event.altKey) return false;
+
+  const eventKey = normalizeShortcutToken(event.key);
+  const shiftAllowedForPlus = expectedKey === "plus" && eventKey === "plus";
+  if (modifiers.has("shift") !== event.shiftKey && !shiftAllowedForPlus) {
+    return false;
+  }
+
+  return eventKey === expectedKey;
+}
+
+function tokenizeShortcut(shortcutText: string) {
+  const trimmed = shortcutText.trim();
+  if (!trimmed) return [];
+  const pieces = /\s/.test(trimmed) ? trimmed.split(/\s+/) : trimmed.split("+");
+  return pieces.map(normalizeShortcutToken).filter(Boolean);
+}
+
+function normalizeShortcutToken(token: string) {
+  const value = token.trim().toLowerCase();
+  if (!value) return "";
+  if (value === "cmd" || value === "command" || value === "meta" || value === "⌘") {
+    return "cmd";
+  }
+  if (value === "control") return "ctrl";
+  if (value === "option") return "alt";
+  if (value === "+" || value === "=" || value === "plus") return "plus";
+  if (value === "-" || value === "_" || value === "minus") return "minus";
+  if (value === "," || value === "comma") return "comma";
+  if (value === "esc") return "escape";
+  if (value === " ") return "space";
+  return value.length === 1 ? value : value;
+}
+
+function isModifierToken(token: string) {
+  return token === "cmd" || token === "ctrl" || token === "alt" || token === "shift";
+}
+
+function hasCommandModifier(event: KeyboardEvent) {
+  return event.metaKey || event.ctrlKey || event.altKey;
+}
+
+function isEditableShortcutTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    target.isContentEditable
   );
 }
 

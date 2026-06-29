@@ -64,6 +64,7 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
   const [mobileConversationsOpen, setMobileConversationsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [queuedDraft, setQueuedDraft] = useState<string | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   const mobileConversationsRef = useRef<HTMLDivElement | null>(null);
   const {
@@ -171,6 +172,7 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
   } = useMessageViewport({
     busy,
     conversationId,
+    loadingConversations,
     loadingMessages,
     messages,
     vault,
@@ -264,6 +266,11 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     clearEditingConversation();
   }, [clearEditingConversation, resetActiveConversation, resetAutoScroll]);
 
+  useEffect(() => {
+    window.addEventListener("salty:new-chat", startNewChat);
+    return () => window.removeEventListener("salty:new-chat", startNewChat);
+  }, [startNewChat]);
+
   const handleOpenConversation = useCallback((nextConversationId: string) => {
     setMobileConversationsOpen(false);
     resetAutoScroll();
@@ -294,6 +301,22 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     void shareConversationSnapshot();
   }, [shareConversationSnapshot]);
 
+  const handleQueueDraft = useCallback((draft: string) => {
+    const nextDraft = draft.trim();
+    if (!nextDraft) return false;
+    setQueuedDraft(nextDraft);
+    return true;
+  }, []);
+
+  const handleDeleteQueuedDraft = useCallback(() => {
+    setQueuedDraft(null);
+  }, []);
+
+  const handleSteerQueuedDraft = useCallback(() => {
+    if (!queuedDraft || !busyRef.current) return;
+    stopResponse();
+  }, [busyRef, queuedDraft, stopResponse]);
+
   const handleSubmit = useCallback(async ({
     draft,
     files,
@@ -323,6 +346,17 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
       title: submittedDraft || submittedFiles[0]?.name || "New conversation",
     });
   }, [busyRef, sendUserTurn]);
+
+  useEffect(() => {
+    if (busy || !queuedDraft) return;
+
+    const draftToSend = queuedDraft;
+    setQueuedDraft(null);
+    void handleSubmit({ draft: draftToSend, files: [] }).then((sent) => {
+      if (sent) return;
+      setQueuedDraft((current) => current ?? draftToSend);
+    });
+  }, [busy, handleSubmit, queuedDraft]);
 
   return (
     <section className={sidebarCollapsed ? "chat-layout collapsed" : "chat-layout"}>
@@ -390,7 +424,10 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
           modelMenuRef={modelMenuRef}
           onDraftKeyDown={handleDraftKeyDown}
           onModelChange={handleComposerModelChange}
+          onDeleteQueuedDraft={handleDeleteQueuedDraft}
           onReasoningEffortChange={handleReasoningEffortChange}
+          onQueueDraft={handleQueueDraft}
+          onSteerQueuedDraft={handleSteerQueuedDraft}
           onSubmit={handleSubmit}
           onStopResponse={stopResponse}
           onToggleModelMenu={toggleModelMenu}
@@ -404,6 +441,7 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
           selectedModelValue={selectedModelValue}
           selectedSupportsAttachments={selectedSupportsAttachments}
           thinkingMode={thinkingMode}
+          queuedDraft={queuedDraft}
         />
       </div>
 

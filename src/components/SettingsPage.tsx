@@ -3,12 +3,12 @@ import type { User } from "@supabase/supabase-js";
 import { Link, useLocation, useNavigate } from "react-router";
 import {
   ArrowLeft,
-  Bell,
   Bot,
   Brush,
   Gauge,
   Keyboard,
   SlidersHorizontal,
+  Sparkles,
   UserRound,
 } from "lucide-react";
 import type { ProviderId, ProviderKeyState } from "@/types/domain";
@@ -23,8 +23,21 @@ import {
   loadEncryptedProviderKeys,
 } from "@/lib/providerKeys";
 import { loadUsageEvents, type UsageEventRecord } from "@/lib/usageEvents";
+import {
+  applyUserPreferences,
+  loadUserPreferences,
+  saveUserPreferences,
+  type UserPreferences,
+} from "@/lib/userPreferences";
 import type { UnlockedVault } from "@/lib/vault";
-import { ProviderSettingsPanel } from "./ProviderSettingsPanel";
+import { AppearancePanel } from "./settings/AppearancePanel";
+import { GeneralPanel } from "./settings/GeneralPanel";
+import { PersonalizationPanel } from "./settings/PersonalizationPanel";
+import { ProfilePanel } from "./settings/ProfilePanel";
+import { ProviderPanel } from "./settings/ProviderPanel";
+import { ShortcutPanel } from "./settings/ShortcutPanel";
+import { UsagePanel } from "./settings/UsagePanel";
+import type { ModelUsage, UsageSummary } from "./settings/settingsTypes";
 
 /** Props for the account settings route. */
 type SettingsPageProps = {
@@ -50,7 +63,7 @@ const tabs: Array<{ id: SettingsTab; label: string; icon: typeof UserRound }> = 
   { id: "appearance", label: "Appearance", icon: Brush },
   { id: "usage", label: "Usage", icon: Gauge },
   { id: "provider", label: "Provider", icon: Bot },
-  { id: "personalization", label: "Personalization", icon: Bell },
+  { id: "personalization", label: "Personalization", icon: Sparkles },
   { id: "shortcut", label: "Shortcut", icon: Keyboard },
 ];
 
@@ -69,6 +82,24 @@ export function SettingsPage({ user, vault }: SettingsPageProps) {
   const [providerKeys, setProviderKeys] =
     useState<Record<ProviderId, ProviderKeyState>>(emptyProviderKeyState);
   const [providerError, setProviderError] = useState<string | null>(null);
+  const [preferences, setPreferences] = useState(loadUserPreferences);
+
+  useEffect(() => {
+    function handlePreferenceUpdate(event: Event) {
+      const detail = (event as CustomEvent<UserPreferences>).detail;
+      setPreferences(detail ?? loadUserPreferences());
+    }
+
+    window.addEventListener(
+      "salty:user-preferences-updated",
+      handlePreferenceUpdate,
+    );
+    return () =>
+      window.removeEventListener(
+        "salty:user-preferences-updated",
+        handlePreferenceUpdate,
+      );
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -180,6 +211,12 @@ export function SettingsPage({ user, vault }: SettingsPageProps) {
     }));
   }
 
+  function updatePreferences(nextPreferences: UserPreferences) {
+    setPreferences(nextPreferences);
+    saveUserPreferences(nextPreferences);
+    applyUserPreferences(nextPreferences);
+  }
+
   return (
     <section className="settings-page">
       <aside className="settings-sidebar">
@@ -224,10 +261,16 @@ export function SettingsPage({ user, vault }: SettingsPageProps) {
             loading={loadingUsage}
             totalTokens={usageSummary.totalTokens}
             usageError={usageError}
+            user={user}
           />
         ) : null}
-        {activeTab === "general" ? <GeneralPanel user={user} /> : null}
-        {activeTab === "appearance" ? <AppearancePanel /> : null}
+        {activeTab === "general" ? <GeneralPanel /> : null}
+        {activeTab === "appearance" ? (
+          <AppearancePanel
+            preferences={preferences}
+            updatePreferences={updatePreferences}
+          />
+        ) : null}
         {activeTab === "usage" ? (
           <UsagePanel
             loading={loadingUsage}
@@ -245,300 +288,22 @@ export function SettingsPage({ user, vault }: SettingsPageProps) {
             vault={vault}
           />
         ) : null}
-        {activeTab === "personalization" ? <PersonalizationPanel /> : null}
-        {activeTab === "shortcut" ? <ShortcutPanel /> : null}
+        {activeTab === "personalization" ? (
+          <PersonalizationPanel
+            preferences={preferences}
+            updatePreferences={updatePreferences}
+          />
+        ) : null}
+        {activeTab === "shortcut" ? (
+          <ShortcutPanel
+            preferences={preferences}
+            updatePreferences={updatePreferences}
+          />
+        ) : null}
       </main>
     </section>
   );
 }
-
-/** Props for the profile activity heatmap panel. */
-type ProfilePanelProps = {
-  /** Current year daily token totals and heat levels. */
-  dailyUsage: DailyUsage;
-  /** Whether usage events are still loading. */
-  loading: boolean;
-  /** Total tokens across loaded usage events. */
-  totalTokens: number;
-  /** Usage loading error, if any. */
-  usageError: string | null;
-};
-
-/** Displays account activity as a yearly token heatmap. */
-function ProfilePanel({
-  dailyUsage,
-  loading,
-  totalTokens,
-  usageError,
-}: ProfilePanelProps) {
-  return (
-    <section className="settings-panel">
-      <header className="settings-panel-header">
-        <div>
-          <span>Profile</span>
-          <h1>{dailyUsage.year} token activity</h1>
-        </div>
-        <strong>{formatNumber(totalTokens)} tokens</strong>
-      </header>
-      {usageError ? <div className="notice danger">{usageError}</div> : null}
-      <div className="usage-heatmap" aria-label="Daily token usage">
-        {loading ? (
-          <span className="loading-shimmer-text">Loading usage...</span>
-        ) : (
-          dailyUsage.days.map((day) => (
-            <div
-              aria-label={`${day.label}: ${formatNumber(day.tokens)} tokens`}
-              className={`heatmap-cell level-${day.level}`}
-              key={day.key}
-              title={`${day.label}: ${formatNumber(day.tokens)} tokens`}
-            />
-          ))
-        )}
-      </div>
-      <div className="heatmap-legend">
-        <span>Less</span>
-        {[0, 1, 2, 3, 4].map((level) => (
-          <span className={`heatmap-cell level-${level}`} key={level} />
-        ))}
-        <span>More</span>
-      </div>
-    </section>
-  );
-}
-
-/** Props for the model usage totals panel. */
-type UsagePanelProps = {
-  /** Whether usage events are still loading. */
-  loading: boolean;
-  /** Per-model aggregate usage rows. */
-  modelUsage: ModelUsage[];
-  /** Total response latency across loaded usage events. */
-  totalLatency: number;
-  /** Total tokens across loaded usage events. */
-  totalTokens: number;
-  /** Usage loading error, if any. */
-  usageError: string | null;
-};
-
-/** Displays token, duration, and call totals grouped by provider/model. */
-function UsagePanel({
-  loading,
-  modelUsage,
-  totalLatency,
-  totalTokens,
-  usageError,
-}: UsagePanelProps) {
-  return (
-    <section className="settings-panel">
-      <header className="settings-panel-header">
-        <div>
-          <span>Usage</span>
-          <h1>Model totals</h1>
-        </div>
-        <div className="usage-summary">
-          <strong>{formatNumber(totalTokens)}</strong>
-          <span>{formatDuration(totalLatency)}</span>
-        </div>
-      </header>
-      {usageError ? <div className="notice danger">{usageError}</div> : null}
-      {loading ? (
-        <span className="loading-shimmer-text">Loading usage...</span>
-      ) : (
-        <div className="usage-table" role="table" aria-label="Token usage by model">
-          <div className="usage-table-row header" role="row">
-            <span>Model</span>
-            <span>Tokens</span>
-            <span>Duration</span>
-            <span>Calls</span>
-          </div>
-          {modelUsage.length > 0 ? (
-            modelUsage.map((row) => (
-              <div className="usage-table-row" role="row" key={row.key}>
-                <span>
-                  <strong>{row.model}</strong>
-                  <small>{row.provider}</small>
-                </span>
-                <span>{formatNumber(row.totalTokens)}</span>
-                <span>{formatDuration(row.latencyMs)}</span>
-                <span>{row.calls}</span>
-              </div>
-            ))
-          ) : (
-            <div className="usage-empty">No usage recorded.</div>
-          )}
-        </div>
-      )}
-    </section>
-  );
-}
-
-/** Props for the provider settings panel. */
-type ProviderPanelProps = {
-  /** Provider-key loading error, if any. */
-  providerError: string | null;
-  /** Current provider key/model state keyed by provider. */
-  providerKeys: Record<ProviderId, ProviderKeyState>;
-  /** Applies provider key, model, and hidden-model changes. */
-  updateProviderKey: (provider: ProviderId, state: ProviderKeyState) => void;
-  /** Unlocked encryption vault used by provider setting cards. */
-  vault: UnlockedVault;
-};
-
-/** Displays provider API-key panels for all supported providers. */
-function ProviderPanel({
-  providerError,
-  providerKeys,
-  updateProviderKey,
-  vault,
-}: ProviderPanelProps) {
-  return (
-    <section className="settings-panel">
-      <header className="settings-panel-header">
-        <div>
-          <span>Provider</span>
-          <h1>API keys</h1>
-        </div>
-      </header>
-      {providerError ? <div className="notice danger">{providerError}</div> : null}
-      <div className="provider-settings-list">
-        {providerIds.map((providerId) => (
-          <ProviderSettingsPanel
-            key={providerId}
-            onProviderKeyChange={updateProviderKey}
-            provider={providerId}
-            state={providerKeys[providerId]}
-            vault={vault}
-          />
-        ))}
-      </div>
-    </section>
-  );
-}
-
-/** Displays account identity fields. */
-function GeneralPanel({ user }: { user: User }) {
-  return (
-    <section className="settings-panel compact">
-      <header className="settings-panel-header">
-        <div>
-          <span>General</span>
-          <h1>Account</h1>
-        </div>
-      </header>
-      <dl className="settings-definition-list">
-        <div>
-          <dt>Email</dt>
-          <dd>{user.email}</dd>
-        </div>
-        <div>
-          <dt>User ID</dt>
-          <dd>{user.id}</dd>
-        </div>
-      </dl>
-    </section>
-  );
-}
-
-/** Displays appearance settings placeholders. */
-function AppearancePanel() {
-  return (
-    <section className="settings-panel compact">
-      <header className="settings-panel-header">
-        <div>
-          <span>Appearance</span>
-          <h1>Display</h1>
-        </div>
-      </header>
-      <div className="settings-option-row">
-        <span>Theme</span>
-        <strong>System</strong>
-      </div>
-    </section>
-  );
-}
-
-/** Displays personalization settings placeholders. */
-function PersonalizationPanel() {
-  return (
-    <section className="settings-panel compact">
-      <header className="settings-panel-header">
-        <div>
-          <span>Personalization</span>
-          <h1>Preferences</h1>
-        </div>
-      </header>
-      <div className="settings-option-row">
-        <span>Memory</span>
-        <strong>Off</strong>
-      </div>
-    </section>
-  );
-}
-
-/** Displays keyboard shortcut reference rows. */
-function ShortcutPanel() {
-  return (
-    <section className="settings-panel compact">
-      <header className="settings-panel-header">
-        <div>
-          <span>Shortcut</span>
-          <h1>Keyboard</h1>
-        </div>
-      </header>
-      <div className="shortcut-list">
-        <div>
-          <span>Send</span>
-          <kbd>Enter</kbd>
-        </div>
-        <div>
-          <span>New line</span>
-          <kbd>Shift Enter</kbd>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/** Daily token usage data for the yearly profile heatmap. */
-type DailyUsage = {
-  /** Calendar year represented by the heatmap. */
-  year: number;
-  /** One cell per day with token count and normalized color level. */
-  days: Array<{
-    key: string;
-    label: string;
-    tokens: number;
-    level: number;
-  }>;
-};
-
-/** Aggregated token and latency usage for one provider/model pair. */
-type ModelUsage = {
-  /** Stable provider:model key. */
-  key: string;
-  /** Provider that handled the calls. */
-  provider: ProviderId;
-  /** Model that handled the calls. */
-  model: string;
-  /** Sum of prompt and completion tokens. */
-  totalTokens: number;
-  /** Sum of response latency in milliseconds. */
-  latencyMs: number;
-  /** Number of recorded usage events. */
-  calls: number;
-};
-
-/** All usage aggregates required by profile and usage settings panels. */
-type UsageSummary = {
-  /** Current year daily token heatmap data. */
-  dailyUsage: DailyUsage;
-  /** Per-model aggregate rows sorted by token usage. */
-  modelUsage: ModelUsage[];
-  /** Sum of all loaded token usage events. */
-  totalTokens: number;
-  /** Sum of all loaded response latencies. */
-  totalLatency: number;
-};
 
 function isSettingsTab(value: string | undefined): value is SettingsTab {
   return tabs.some((tab) => tab.id === value);
@@ -643,17 +408,4 @@ function dateKey(date: Date) {
   const month = `${date.getMonth() + 1}`.padStart(2, "0");
   const day = `${date.getDate()}`.padStart(2, "0");
   return `${year}-${month}-${day}`;
-}
-
-function formatNumber(value: number) {
-  return Math.round(value).toLocaleString();
-}
-
-function formatDuration(ms: number) {
-  if (ms < 1000) return `${Math.round(ms)} ms`;
-  const seconds = Math.round(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds % 60;
-  return `${minutes}m ${remainder}s`;
 }

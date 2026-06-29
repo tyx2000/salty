@@ -35,6 +35,7 @@ import {
 import { handleEmptyAssistantResponse } from "@/lib/emptyAssistantResponse";
 import { safeTouchConversation } from "@/lib/messageSettlement";
 import { rollbackFailedTurn } from "@/lib/turnRollback";
+import { loadGlobalInstructions } from "@/lib/userPreferences";
 import type { UnlockedVault } from "@/lib/vault";
 
 /** Options for sending one user turn to the selected provider. */
@@ -280,6 +281,7 @@ export function useSendUserTurn({
           historyMessages,
           completedUserMessage,
           requestAttachmentMap,
+          loadGlobalInstructions(),
         ),
         signal: abortController.signal,
         onToken: (token) => {
