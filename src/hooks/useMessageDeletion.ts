@@ -6,16 +6,25 @@ import { deleteMessages } from "@/lib/messages";
 import { userTurnMessageIds } from "@/lib/chatMessageUtils";
 import type { UnlockedVault } from "@/lib/vault";
 
+/** Options for deleting one user turn and its paired assistant response. */
 type UseMessageDeletionOptions = {
+  /** Prevents deletion while a request is in flight. */
   busy: boolean;
+  /** Active conversation id; null means only local pending messages can be removed. */
   conversationId: string | null;
+  /** Current ordered message list used to find paired turn ids. */
   messages: ChatMessage[];
+  /** Receives delete failures for display. */
   onError: (message: string | null) => void;
+  /** Updates the sidebar timestamp after successful deletion. */
   setConversations: Dispatch<SetStateAction<ConversationListItem[]>>;
+  /** Removes deleted messages from the active timeline. */
   setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
+  /** Unlocked encryption vault used for database deletion. */
   vault: UnlockedVault;
 };
 
+/** Provides true deletion for a user message and its corresponding response. */
 export function useMessageDeletion({
   busy,
   conversationId,

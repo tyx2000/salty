@@ -3,16 +3,25 @@ import type { User } from "@supabase/supabase-js";
 import { Link } from "react-router";
 import { Bot, Gauge, LogOut, Settings, UserRound } from "lucide-react";
 
+/** Props for the account/settings popover in the sidebar footer. */
 type SettingsPopoverProps = {
+  /** Popover container ref used for outside-click dismissal. */
   menuRef: RefObject<HTMLDivElement | null>;
+  /** Signs the current user out. */
   onLogout: () => void;
+  /** Opens or closes the popover. */
   onOpenChange: (open: boolean) => void;
+  /** Whether the popover menu is visible. */
   open: boolean;
+  /** Chat route to return to after visiting settings. */
   returnTo: string;
+  /** Whether the sidebar is collapsed to icon-only mode. */
   sidebarCollapsed: boolean;
+  /** Authenticated user shown in the account trigger and menu. */
   user: User;
 };
 
+/** Displays the user trigger and links to profile, usage, provider, and settings pages. */
 export function SettingsPopover({
   menuRef,
   onLogout,

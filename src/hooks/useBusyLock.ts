@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+/**
+ * Provides a synchronous busy lock for chat turns plus React state for UI
+ * disabling. The ref prevents rapid double-clicks before state updates commit.
+ */
 export function useBusyLock() {
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);

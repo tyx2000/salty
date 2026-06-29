@@ -5,11 +5,15 @@ import { env } from "@/lib/env";
 import { loadSharedSnapshot, type ShareKind } from "@/lib/shares";
 import { MessagePartRenderer } from "./MessagePartRenderer";
 
+/** Props for the public encrypted share viewer route. */
 type ShareViewerProps = {
+  /** Share type parsed from the route: full conversation or one turn. */
   kind: ShareKind;
+  /** Public share token parsed from the route path. */
   token: string;
 };
 
+/** Loads and displays a shared encrypted snapshot using the URL hash as decrypt key. */
 export function ShareViewer({ kind, token }: ShareViewerProps) {
   const [snapshot, setSnapshot] = useState<SharedSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);

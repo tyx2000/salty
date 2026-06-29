@@ -9,6 +9,7 @@ type ContextMenuProps = {
   open: boolean;
   /** Called when the menu should close (outside click, scroll, resize, Escape). */
   onClose: () => void;
+  /** Menu item buttons rendered inside the positioned menu surface. */
   children: ReactNode;
 };
 

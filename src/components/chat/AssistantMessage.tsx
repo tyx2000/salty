@@ -7,14 +7,21 @@ import {
 } from "./messageDisplay";
 import { MessageContent } from "./MessageContent";
 
+/** Props for a rendered assistant response and response metadata. */
 type AssistantMessageProps = {
+  /** Stable memo context for action button availability. */
   actionContext: object;
+  /** Whether action buttons should be disabled while a request is active. */
   busy: boolean;
+  /** Resolves encrypted attachments for inline previews. */
   loadAttachmentPreview: (attachment: ChatAttachment) => Promise<string>;
+  /** Assistant message to render. */
   message: ChatMessage;
+  /** Creates a share link for this response and its paired user message. */
   onShareMessageTurn: (message: ChatMessage) => Promise<void>;
 };
 
+/** Displays an assistant message, thinking state, share action, and persisted stats. */
 export const AssistantMessage = memo(
   function AssistantMessage({
     busy,

@@ -22,15 +22,24 @@ import type { UnlockedVault } from "@/lib/vault";
 const providerIds: ProviderId[] = ["openai", "deepseek"];
 
 export type AvailableModel = {
+  /** Provider that owns the listed model. */
   provider: ProviderId;
+  /** Enriched model metadata displayed in model selection UIs. */
   model: ProviderModel;
 };
 
+/** Options for loading provider keys and selecting available models. */
 type UseProviderModelsOptions = {
+  /** Receives provider-key load/test failures for display. */
   onError: (message: string) => void;
+  /** Unlocked encryption vault used to read encrypted provider keys. */
   vault: UnlockedVault;
 };
 
+/**
+ * Loads saved provider keys, tests them to discover models, tracks hidden model
+ * preferences, and exposes the active provider/model selection.
+ */
 export function useProviderModels({
   onError,
   vault,

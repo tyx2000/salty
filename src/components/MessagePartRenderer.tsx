@@ -3,12 +3,17 @@ import type { ChatAttachment, MessagePart } from "@/types/domain";
 import { FileText } from "lucide-react";
 import { MarkdownMessage } from "./MarkdownMessage";
 
+/** Props for rendering one structured message part. */
 type MessagePartRendererProps = {
+  /** Attachment lookup keyed by attachment id for image/file parts. */
   attachments?: Record<string, ChatAttachment>;
+  /** Optional loader for encrypted attachment previews. */
   loadAttachmentPreview?: (attachment: ChatAttachment) => Promise<string>;
+  /** Structured part to render as markdown, attachment, JSON, or tool output. */
   part: MessagePart;
 };
 
+/** Displays one message part using the correct renderer for its type. */
 export function MessagePartRenderer({
   attachments,
   loadAttachmentPreview,
@@ -51,11 +56,15 @@ export function MessagePartRenderer({
   );
 }
 
+/** Props for the inline attachment card or image preview. */
 type AttachmentPreviewProps = {
+  /** Attachment metadata and optional already-materialized data URL. */
   attachment?: ChatAttachment;
+  /** Loader used when the image preview must be decrypted on demand. */
   loadAttachmentPreview?: (attachment: ChatAttachment) => Promise<string>;
 };
 
+/** Displays image previews with lazy decryption, or file download cards. */
 function AttachmentPreview({
   attachment,
   loadAttachmentPreview,

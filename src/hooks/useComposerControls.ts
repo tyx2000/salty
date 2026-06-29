@@ -6,6 +6,10 @@ import {
 import type { ReasoningEffort, ThinkingMode } from "@/types/domain";
 import { useClickOutside } from "@/hooks/useClickOutside";
 
+/**
+ * Owns composer-local UI state: draft text, pending files, thinking/reasoning
+ * selections, and open/close behavior for composer menus.
+ */
 export function useComposerControls() {
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [reasoningMenuOpen, setReasoningMenuOpen] = useState(false);

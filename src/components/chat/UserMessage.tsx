@@ -3,16 +3,25 @@ import { CircleAlert, RotateCcw, Share2, Trash2 } from "lucide-react";
 import type { ChatAttachment, ChatMessage } from "@/types/domain";
 import { MessageContent } from "./MessageContent";
 
+/** Props for a rendered user message bubble and its action buttons. */
 type UserMessageProps = {
+  /** Stable memo context for action button availability. */
   actionContext: object;
+  /** Whether action buttons should be disabled while a request is active. */
   busy: boolean;
+  /** Resolves encrypted attachments for inline previews. */
   loadAttachmentPreview: (attachment: ChatAttachment) => Promise<string>;
+  /** User message to render. */
   message: ChatMessage;
+  /** Permanently deletes this user turn and its paired response. */
   onDeleteUserTurn: (message: ChatMessage) => Promise<void>;
+  /** Retries this message, replacing the old turn after success. */
   onRetryUserTurn: (message: ChatMessage) => Promise<void>;
+  /** Creates a share link for this message and its paired response. */
   onShareMessageTurn: (message: ChatMessage) => Promise<void>;
 };
 
+/** Displays a user message, failed-send indicator, and share/retry/delete actions. */
 export const UserMessage = memo(
   function UserMessage({
     busy,

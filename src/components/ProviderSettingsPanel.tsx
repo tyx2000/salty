@@ -9,10 +9,15 @@ import {
 } from "@/lib/providerKeys";
 import type { UnlockedVault } from "@/lib/vault";
 
+/** Props for one provider API-key and model visibility settings section. */
 type ProviderSettingsPanelProps = {
+  /** Provider whose key and model list are being edited. */
   provider: ProviderId;
+  /** Current API key, tested model list, and hidden model ids for the provider. */
   state: ProviderKeyState;
+  /** Unlocked encryption vault used to save/delete provider keys. */
   vault: UnlockedVault;
+  /** Persists provider key state changes back to the parent settings page. */
   onProviderKeyChange: (provider: ProviderId, state: ProviderKeyState) => void;
 };
 
@@ -21,6 +26,7 @@ const providerLabels: Record<ProviderId, string> = {
   deepseek: "DeepSeek",
 };
 
+/** Displays API-key testing, encrypted key deletion, and model visibility controls. */
 export function ProviderSettingsPanel({
   provider,
   state,

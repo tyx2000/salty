@@ -3,20 +3,33 @@ import type { ChatAttachment, ChatMessage } from "@/types/domain";
 import { AssistantMessage } from "./AssistantMessage";
 import { UserMessage } from "./UserMessage";
 
+/** Props for the scrollable message timeline area. */
 type MessageTimelineProps = {
+  /** Stable memo context for message action buttons. */
   actionContext: object;
+  /** Whether message actions should be disabled while a request is active. */
   busy: boolean;
+  /** Resolves an encrypted attachment into a previewable data URL. */
   loadAttachmentPreview: (attachment: ChatAttachment) => Promise<string>;
+  /** Whether the conversation list is still loading. */
   loadingConversations: boolean;
+  /** Whether the active conversation messages are still loading. */
   loadingMessages: boolean;
+  /** Messages displayed in chronological order. */
   messages: ChatMessage[];
+  /** Scroll container ref used by the viewport hook. */
   messagesRef: RefObject<HTMLDivElement | null>;
+  /** Permanently deletes a user turn and its paired response. */
   onDeleteUserTurn: (message: ChatMessage) => Promise<void>;
+  /** Tracks whether the user is near the bottom for auto-scroll behavior. */
   onMessagesScroll: (event: UIEvent<HTMLDivElement>) => void;
+  /** Retries a user turn after replacing the original turn. */
   onRetryUserTurn: (message: ChatMessage) => Promise<void>;
+  /** Creates a share link for a user/assistant turn. */
   onShareMessageTurn: (message: ChatMessage) => Promise<void>;
 };
 
+/** Displays loading, empty state, and rendered chat messages in the main panel. */
 export const MessageTimeline = memo(
   function MessageTimeline({
     actionContext,

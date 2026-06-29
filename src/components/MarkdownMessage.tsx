@@ -2,10 +2,13 @@ import { memo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+/** Props for rendering markdown content inside a chat message. */
 type MarkdownMessageProps = {
+  /** Markdown text, including partial streaming code fences. */
   content: string;
 };
 
+/** Renders markdown with GFM support and balances incomplete streaming code fences. */
 export const MarkdownMessage = memo(function MarkdownMessage({
   content,
 }: MarkdownMessageProps) {

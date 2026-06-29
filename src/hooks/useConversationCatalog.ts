@@ -8,13 +8,22 @@ import {
 import { flushPendingAttachmentStorageRemovals } from "@/lib/attachmentStorage";
 import type { UnlockedVault } from "@/lib/vault";
 
+/** Options for loading and mutating the sidebar conversation catalog. */
 type UseConversationCatalogOptions = {
+  /** Conversation currently shown in the main panel, used after deletion. */
   activeConversationId: string | null;
+  /** Called when the active conversation was permanently deleted. */
   onActiveConversationDeleted: () => void;
+  /** Receives load, rename, and delete errors for display. */
   onError: (message: string | null) => void;
+  /** Unlocked encryption vault used for conversation storage access. */
   vault: UnlockedVault;
 };
 
+/**
+ * Loads the conversation list and owns sidebar-level interactions: context menu,
+ * inline rename, and true conversation deletion.
+ */
 export function useConversationCatalog({
   activeConversationId,
   onActiveConversationDeleted,

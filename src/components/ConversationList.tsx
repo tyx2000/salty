@@ -1,16 +1,25 @@
 import type { KeyboardEvent, MouseEvent } from "react";
 import type { ConversationListItem } from "@/lib/conversations";
 
+/** Props for rendering conversation rows in the sidebar or mobile popover. */
 type ConversationListProps = {
+  /** Conversation currently loaded in the main panel. */
   activeConversationId: string | null;
+  /** Ordered conversations to display. */
   conversations: ConversationListItem[];
+  /** Conversation currently shown as an inline rename input. */
   editingConversationId?: string | null;
+  /** Opens the row context menu from mouse or keyboard interaction. */
   onContextMenu?: (conversation: ConversationListItem, x: number, y: number) => void;
+  /** Loads a conversation when its row is selected. */
   onOpenConversation: (conversationId: string) => void;
+  /** Persists or cancels an inline rename. */
   onRenameSubmit?: (conversationId: string, title: string) => void;
+  /** Selects desktop row styling or compact mobile popover styling. */
   variant: "sidebar" | "popover";
 };
 
+/** Displays selectable conversation rows, including rename and context-menu affordances. */
 export function ConversationList({
   activeConversationId,
   conversations,

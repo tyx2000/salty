@@ -5,11 +5,15 @@ import {
   orderedMessageParts,
 } from "./messageDisplay";
 
+/** Props for rendering the ordered parts inside one chat message. */
 type MessageContentProps = {
+  /** Converts an encrypted attachment to a data URL when an attachment part renders. */
   loadAttachmentPreview: (attachment: ChatAttachment) => Promise<string>;
+  /** Message whose text, markdown, file, and image parts should be displayed. */
   message: ChatMessage;
 };
 
+/** Displays a message body with attachments ordered before/around text as needed. */
 export function MessageContent({
   loadAttachmentPreview,
   message,

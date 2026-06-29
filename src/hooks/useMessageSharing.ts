@@ -9,16 +9,25 @@ import {
 } from "@/lib/shares";
 import type { UnlockedVault } from "@/lib/vault";
 
+/** Options for creating conversation and turn share links. */
 type UseMessageSharingOptions = {
+  /** Title used for full-conversation share snapshots. */
   activeConversationTitle: string;
+  /** Prevents sharing while a request is in flight. */
   busy: boolean;
+  /** Active conversation id used to build share records. */
   conversationId: string | null;
+  /** Current ordered message list to materialize into share snapshots. */
   messages: ChatMessage[];
+  /** Receives share failures for display. */
   onError: (message: string | null) => void;
+  /** Receives success messages after a share URL is copied. */
   onNotice: (message: string | null) => void;
+  /** Unlocked encryption vault used to materialize encrypted attachments. */
   vault: UnlockedVault;
 };
 
+/** Creates share URLs for either the full conversation or one user/assistant turn. */
 export function useMessageSharing({
   activeConversationTitle,
   busy,

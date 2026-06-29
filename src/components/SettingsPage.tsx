@@ -26,8 +26,11 @@ import { loadUsageEvents, type UsageEventRecord } from "@/lib/usageEvents";
 import type { UnlockedVault } from "@/lib/vault";
 import { ProviderSettingsPanel } from "./ProviderSettingsPanel";
 
+/** Props for the account settings route. */
 type SettingsPageProps = {
+  /** Authenticated user shown in profile/general settings. */
   user: User;
+  /** Unlocked encryption vault used to load usage and provider settings. */
   vault: UnlockedVault;
 };
 
@@ -40,6 +43,7 @@ type SettingsTab =
   | "personalization"
   | "shortcut";
 
+/** Tab metadata used to render the vertical settings navigation. */
 const tabs: Array<{ id: SettingsTab; label: string; icon: typeof UserRound }> = [
   { id: "profile", label: "Profile", icon: UserRound },
   { id: "general", label: "General", icon: SlidersHorizontal },
@@ -52,6 +56,7 @@ const tabs: Array<{ id: SettingsTab; label: string; icon: typeof UserRound }> = 
 
 const providerIds: ProviderId[] = ["openai", "deepseek"];
 
+/** Displays the settings layout and routes each settings subpath to its panel. */
 export function SettingsPage({ user, vault }: SettingsPageProps) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -241,17 +246,25 @@ export function SettingsPage({ user, vault }: SettingsPageProps) {
   );
 }
 
+/** Props for the profile activity heatmap panel. */
+type ProfilePanelProps = {
+  /** Current year daily token totals and heat levels. */
+  dailyUsage: DailyUsage;
+  /** Whether usage events are still loading. */
+  loading: boolean;
+  /** Total tokens across loaded usage events. */
+  totalTokens: number;
+  /** Usage loading error, if any. */
+  usageError: string | null;
+};
+
+/** Displays account activity as a yearly token heatmap. */
 function ProfilePanel({
   dailyUsage,
   loading,
   totalTokens,
   usageError,
-}: {
-  dailyUsage: DailyUsage;
-  loading: boolean;
-  totalTokens: number;
-  usageError: string | null;
-}) {
+}: ProfilePanelProps) {
   return (
     <section className="settings-panel">
       <header className="settings-panel-header">
@@ -287,19 +300,28 @@ function ProfilePanel({
   );
 }
 
+/** Props for the model usage totals panel. */
+type UsagePanelProps = {
+  /** Whether usage events are still loading. */
+  loading: boolean;
+  /** Per-model aggregate usage rows. */
+  modelUsage: ModelUsage[];
+  /** Total response latency across loaded usage events. */
+  totalLatency: number;
+  /** Total tokens across loaded usage events. */
+  totalTokens: number;
+  /** Usage loading error, if any. */
+  usageError: string | null;
+};
+
+/** Displays token, duration, and call totals grouped by provider/model. */
 function UsagePanel({
   loading,
   modelUsage,
   totalLatency,
   totalTokens,
   usageError,
-}: {
-  loading: boolean;
-  modelUsage: ModelUsage[];
-  totalLatency: number;
-  totalTokens: number;
-  usageError: string | null;
-}) {
+}: UsagePanelProps) {
   return (
     <section className="settings-panel">
       <header className="settings-panel-header">
@@ -344,17 +366,25 @@ function UsagePanel({
   );
 }
 
+/** Props for the provider settings panel. */
+type ProviderPanelProps = {
+  /** Provider-key loading error, if any. */
+  providerError: string | null;
+  /** Current provider key/model state keyed by provider. */
+  providerKeys: Record<ProviderId, ProviderKeyState>;
+  /** Applies provider key, model, and hidden-model changes. */
+  updateProviderKey: (provider: ProviderId, state: ProviderKeyState) => void;
+  /** Unlocked encryption vault used by provider setting cards. */
+  vault: UnlockedVault;
+};
+
+/** Displays provider API-key panels for all supported providers. */
 function ProviderPanel({
   providerError,
   providerKeys,
   updateProviderKey,
   vault,
-}: {
-  providerError: string | null;
-  providerKeys: Record<ProviderId, ProviderKeyState>;
-  updateProviderKey: (provider: ProviderId, state: ProviderKeyState) => void;
-  vault: UnlockedVault;
-}) {
+}: ProviderPanelProps) {
   return (
     <section className="settings-panel">
       <header className="settings-panel-header">
@@ -379,6 +409,7 @@ function ProviderPanel({
   );
 }
 
+/** Displays account identity fields. */
 function GeneralPanel({ user }: { user: User }) {
   return (
     <section className="settings-panel compact">
@@ -402,6 +433,7 @@ function GeneralPanel({ user }: { user: User }) {
   );
 }
 
+/** Displays appearance settings placeholders. */
 function AppearancePanel() {
   return (
     <section className="settings-panel compact">
@@ -419,6 +451,7 @@ function AppearancePanel() {
   );
 }
 
+/** Displays personalization settings placeholders. */
 function PersonalizationPanel() {
   return (
     <section className="settings-panel compact">
@@ -436,6 +469,7 @@ function PersonalizationPanel() {
   );
 }
 
+/** Displays keyboard shortcut reference rows. */
 function ShortcutPanel() {
   return (
     <section className="settings-panel compact">
@@ -459,8 +493,11 @@ function ShortcutPanel() {
   );
 }
 
+/** Daily token usage data for the yearly profile heatmap. */
 type DailyUsage = {
+  /** Calendar year represented by the heatmap. */
   year: number;
+  /** One cell per day with token count and normalized color level. */
   days: Array<{
     key: string;
     label: string;
@@ -469,12 +506,19 @@ type DailyUsage = {
   }>;
 };
 
+/** Aggregated token and latency usage for one provider/model pair. */
 type ModelUsage = {
+  /** Stable provider:model key. */
   key: string;
+  /** Provider that handled the calls. */
   provider: ProviderId;
+  /** Model that handled the calls. */
   model: string;
+  /** Sum of prompt and completion tokens. */
   totalTokens: number;
+  /** Sum of response latency in milliseconds. */
   latencyMs: number;
+  /** Number of recorded usage events. */
   calls: number;
 };
 

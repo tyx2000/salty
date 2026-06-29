@@ -3,62 +3,91 @@ import type {
   KeyboardEvent,
   RefObject,
 } from "react";
-import {
-  Brain,
-  Check,
-  ChevronDown,
-  Gauge,
-  Paperclip,
-  Send,
-  Square,
-  X,
-} from "lucide-react";
+import { Paperclip } from "lucide-react";
 import type {
   ProviderId,
   ProviderModel,
   ReasoningEffort,
   ThinkingMode,
 } from "@/types/domain";
+import { ModelPicker } from "@/components/chat/ModelPicker";
+import { PendingAttachments } from "@/components/chat/PendingAttachments";
+import { RequestControls } from "@/components/chat/RequestControls";
+import { SendButton } from "@/components/chat/SendButton";
 
+/** Model option displayed by the composer model picker. */
 type AvailableModel = {
+  /** Provider that owns the model id. */
   provider: ProviderId;
+  /** Provider-returned model metadata shown in the menu. */
   model: ProviderModel;
 };
 
+/** Reasoning effort option displayed by the request control menu. */
 type ReasoningOption = {
+  /** Stable value sent with chat requests. */
   value: ReasoningEffort;
+  /** Human-readable label shown in the menu. */
   label: string;
 };
 
+/** Props for the bottom message composer and request controls. */
 type ComposerProps = {
+  /** Models available after provider keys are tested. */
   availableModels: AvailableModel[];
+  /** Whether a request is currently sending or streaming. */
   busy: boolean;
+  /** Current textarea value. */
   draft: string;
+  /** Hidden file input ref used by the attach button. */
   fileInputRef: RefObject<HTMLInputElement | null>;
+  /** Whether the model picker menu is open. */
   modelMenuOpen: boolean;
+  /** Model picker container ref used for outside-click dismissal. */
   modelMenuRef: RefObject<HTMLDivElement | null>;
+  /** Adds files selected by the hidden file input. */
   onAddPendingFiles: (files: File[]) => void;
+  /** Updates the controlled textarea value. */
   onDraftChange: (value: string) => void;
+  /** Handles Enter-to-send keyboard behavior. */
   onDraftKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
+  /** Selects a provider:model value from the model picker. */
   onModelChange: (value: string) => void;
+  /** Selects the reasoning effort for the next request. */
   onReasoningEffortChange: (value: ReasoningEffort) => void;
+  /** Removes a pending file chip by index. */
   onRemovePendingFile: (index: number) => void;
+  /** Submits the message form. */
   onSubmit: (event: FormEvent) => void;
+  /** Shows or hides the model picker. */
   onToggleModelMenu: () => void;
+  /** Shows or hides the reasoning picker. */
   onToggleReasoningMenu: () => void;
+  /** Toggles thinking mode for the next request. */
   onToggleThinkingMode: () => void;
+  /** Aborts the active streaming response. */
   onStopResponse: () => void;
+  /** Files queued to be uploaded with the next user message. */
   pendingFiles: File[];
+  /** Current reasoning effort selection. */
   reasoningEffort: ReasoningEffort;
+  /** All reasoning effort choices shown in the menu. */
   reasoningEffortOptions: ReasoningOption[];
+  /** Whether the reasoning menu is open. */
   reasoningMenuOpen: boolean;
+  /** Reasoning menu container ref used for outside-click dismissal. */
   reasoningMenuRef: RefObject<HTMLDivElement | null>;
+  /** Label shown in the collapsed model picker button. */
   selectedModelLabel: string;
+  /** Selected provider:model value used to mark the active menu item. */
   selectedModelValue: string;
+  /** Whether the selected model allows file/image attachments. */
   selectedSupportsAttachments: boolean;
+  /** Current thinking mode selection. */
   thinkingMode: ThinkingMode;
 };
 
+/** Displays the chat input, attachment button, request controls, and send/stop button. */
 export function Composer({
   availableModels,
   busy,
@@ -87,29 +116,13 @@ export function Composer({
   selectedSupportsAttachments,
   thinkingMode,
 }: ComposerProps) {
-  const selectedReasoningLabel = reasoningEffortOptions.find(
-    (option) => option.value === reasoningEffort,
-  )?.label;
-
   return (
     <form className="composer" onSubmit={onSubmit}>
       <div className="composer-box">
-        {pendingFiles.length > 0 ? (
-          <div className="pending-attachments">
-            {pendingFiles.map((file, index) => (
-              <div className="pending-attachment" key={`${file.name}:${file.size}:${index}`}>
-                <span>{file.name}</span>
-                <button
-                  aria-label={`Remove ${file.name}`}
-                  onClick={() => onRemovePendingFile(index)}
-                  type="button"
-                >
-                  <X size={13} />
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : null}
+        <PendingAttachments
+          files={pendingFiles}
+          onRemove={onRemovePendingFile}
+        />
         <textarea
           onChange={(event) => onDraftChange(event.target.value)}
           onKeyDown={onDraftKeyDown}
@@ -142,112 +155,31 @@ export function Composer({
           >
             <Paperclip size={15} />
           </button>
-          <div className="model-picker" ref={modelMenuRef}>
-            <button
-              aria-expanded={modelMenuOpen}
-              aria-haspopup="listbox"
-              aria-label="Available model"
-              className="model-picker-button"
-              disabled={availableModels.length === 0}
-              onClick={onToggleModelMenu}
-              type="button"
-            >
-              <span>{selectedModelLabel}</span>
-              <ChevronDown size={14} />
-            </button>
-            <div
-              className={modelMenuOpen ? "model-menu open" : "model-menu"}
-              role="listbox"
-              aria-hidden={!modelMenuOpen}
-            >
-              {availableModels.map((item) => {
-                const value = `${item.provider}:${item.model.id}`;
-                const selected = value === selectedModelValue;
-                return (
-                  <button
-                    aria-selected={selected}
-                    className={selected ? "model-menu-item active" : "model-menu-item"}
-                    key={value}
-                    onClick={() => onModelChange(value)}
-                    role="option"
-                    type="button"
-                  >
-                    <span>{item.model.id}</span>
-                    {item.model.description ? (
-                      <small>{item.model.description}</small>
-                    ) : null}
-                    {selected ? <Check size={14} /> : null}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-          <button
-            aria-label="Toggle thinking mode"
-            aria-pressed={thinkingMode === "enabled"}
-            className={thinkingMode === "enabled" ? "request-toggle active" : "request-toggle"}
-            disabled={busy}
-            onClick={onToggleThinkingMode}
-            title="Thinking"
-            type="button"
-          >
-            <Brain size={14} />
-            <span>Thinking</span>
-          </button>
-          <div className="request-picker" ref={reasoningMenuRef}>
-            <button
-              aria-expanded={reasoningMenuOpen}
-              aria-haspopup="listbox"
-              aria-label="Reasoning effort"
-              className="request-picker-button"
-              disabled={busy}
-              onClick={onToggleReasoningMenu}
-              type="button"
-            >
-              <Gauge size={14} />
-              <span>Reasoning</span>
-              <small>{selectedReasoningLabel}</small>
-              <ChevronDown size={14} />
-            </button>
-            <div
-              className={reasoningMenuOpen ? "request-menu open" : "request-menu"}
-              role="listbox"
-              aria-hidden={!reasoningMenuOpen}
-            >
-              {reasoningEffortOptions.map((option) => {
-                const selected = option.value === reasoningEffort;
-                return (
-                  <button
-                    aria-selected={selected}
-                    className={selected ? "request-menu-item active" : "request-menu-item"}
-                    key={option.value}
-                    onClick={() => onReasoningEffortChange(option.value)}
-                    role="option"
-                    type="button"
-                  >
-                    <span>{option.label}</span>
-                    {selected ? <Check size={14} /> : null}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-          <button
-            className={busy ? "send-button stop-button" : "send-button"}
+          <ModelPicker
+            availableModels={availableModels}
+            modelMenuOpen={modelMenuOpen}
+            modelMenuRef={modelMenuRef}
+            onModelChange={onModelChange}
+            onToggleModelMenu={onToggleModelMenu}
+            selectedModelLabel={selectedModelLabel}
+            selectedModelValue={selectedModelValue}
+          />
+          <RequestControls
+            busy={busy}
+            onReasoningEffortChange={onReasoningEffortChange}
+            onToggleReasoningMenu={onToggleReasoningMenu}
+            onToggleThinkingMode={onToggleThinkingMode}
+            reasoningEffort={reasoningEffort}
+            reasoningEffortOptions={reasoningEffortOptions}
+            reasoningMenuOpen={reasoningMenuOpen}
+            reasoningMenuRef={reasoningMenuRef}
+            thinkingMode={thinkingMode}
+          />
+          <SendButton
+            busy={busy}
             disabled={!busy && !draft.trim() && pendingFiles.length === 0}
-            onClick={busy ? onStopResponse : undefined}
-            type={busy ? "button" : "submit"}
-            aria-label={busy ? "Stop response" : "Send message"}
-          >
-            <span className="send-icon-stack" aria-hidden="true">
-              <span className={busy ? "send-icon inactive" : "send-icon active"}>
-                <Send size={16} />
-              </span>
-              <span className={busy ? "send-icon active" : "send-icon inactive"}>
-                <Square size={13} fill="currentColor" />
-              </span>
-            </span>
-          </button>
+            onStopResponse={onStopResponse}
+          />
         </div>
       </div>
     </form>

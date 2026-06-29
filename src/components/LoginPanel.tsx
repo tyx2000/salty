@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
+/** Displays the Supabase email/password login and signup form. */
 export function LoginPanel() {
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
