@@ -43,8 +43,6 @@ export type SendUserTurnOptions = {
   afterTurnSaved?: (userMessage: ChatMessage, assistantMessage: ChatMessage) => Promise<void>;
   /** True when the caller already acquired the shared busy lock. */
   busyLockAcquired?: boolean;
-  /** Clears draft text and pending files after the local user message is created. */
-  clearComposer?: boolean;
   /** History to send to the model; retries pass history with the old turn removed. */
   historyMessages?: ChatMessage[];
   /** Message parts for the new user message. */
@@ -93,12 +91,8 @@ type UseSendUserTurnOptions = {
   setConversationId: Dispatch<SetStateAction<string | null>>;
   /** Updates the sidebar conversation list after creation or activity. */
   setConversations: Dispatch<SetStateAction<ConversationListItem[]>>;
-  /** Clears composer text when requested. */
-  setDraft: Dispatch<SetStateAction<string>>;
   /** Updates the active timeline as the user message and stream progress change. */
   setMessages: Dispatch<SetStateAction<ChatMessage[]>>;
-  /** Clears composer files when requested. */
-  setPendingFiles: Dispatch<SetStateAction<File[]>>;
   /** Thinking mode sent to the provider request. */
   thinkingMode: ThinkingMode;
   /** Unlocked encryption vault used for persistence, uploads, and usage events. */
@@ -126,9 +120,7 @@ export function useSendUserTurn({
   releaseBusyLock,
   setConversationId,
   setConversations,
-  setDraft,
   setMessages,
-  setPendingFiles,
   thinkingMode,
   vault,
 }: UseSendUserTurnOptions) {
@@ -157,7 +149,6 @@ export function useSendUserTurn({
     historyMessages = defaultHistoryMessages,
     turnProvider = defaultProvider,
     turnModel = defaultModel,
-    clearComposer = false,
     afterTurnSaved,
     busyLockAcquired = false,
   }: SendUserTurnOptions) {
@@ -179,13 +170,13 @@ export function useSendUserTurn({
       releaseHeldBusyLock();
       onError(turnConfig.error);
       if (turnConfig.openProviderSettings) onOpenProviderSettings();
-      return;
+      return false;
     }
     const apiKey = turnConfig.apiKey;
     const resolvedTurnModel = turnConfig.model;
 
     if (!lockHeld) {
-      if (!acquireBusyLock()) return;
+      if (!acquireBusyLock()) return false;
       lockHeld = true;
     }
     onError(null);
@@ -207,7 +198,7 @@ export function useSendUserTurn({
           : "Unable to read attachments.",
       );
       releaseHeldBusyLock();
-      return;
+      return false;
     }
     const {
       assistantMessage,
@@ -216,10 +207,6 @@ export function useSendUserTurn({
       userMessage,
     } = turnDraft;
 
-    if (clearComposer) {
-      setDraft("");
-      setPendingFiles([]);
-    }
     setMessages([...historyMessages, userMessage]);
 
     let statsTimer: number | undefined;
@@ -358,7 +345,7 @@ export function useSendUserTurn({
           errorCode: wasAborted ? "aborted" : "empty_response",
         });
         await safeTouchConversation(nextConversationId);
-        return;
+        return true;
       }
       // Skip touchConversation when afterTurnSaved handles the timestamp refresh.
       if (!afterTurnSaved) await safeTouchConversation(nextConversationId);
@@ -396,6 +383,7 @@ export function useSendUserTurn({
       abortControllerRef.current = null;
       releaseHeldBusyLock();
     }
+    return true;
   }
 
   return {

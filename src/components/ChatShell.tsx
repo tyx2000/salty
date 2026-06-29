@@ -1,5 +1,4 @@
 import {
-  FormEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -69,20 +68,14 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
   const mobileConversationsRef = useRef<HTMLDivElement | null>(null);
   const {
     closeModelMenu,
-    draft,
     fileInputRef,
-    handleAddPendingFiles,
     handleDraftKeyDown,
     handleReasoningEffortChange,
-    handleRemovePendingFile,
     modelMenuOpen,
     modelMenuRef,
-    pendingFiles,
     reasoningEffort,
     reasoningMenuOpen,
     reasoningMenuRef,
-    setDraft,
-    setPendingFiles,
     thinkingMode,
     toggleModelMenu,
     toggleReasoningMenu,
@@ -182,6 +175,16 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     messages,
     vault,
   });
+  const chatReturnPath = conversationId
+    ? `/chat/${encodeURIComponent(conversationId)}`
+    : "/";
+  const openProviderSettings = useCallback(() => {
+    navigate("/settings/provider", {
+      state: {
+        returnTo: chatReturnPath,
+      },
+    });
+  }, [chatReturnPath, navigate]);
   const { sendUserTurn, stopResponse } = useSendUserTurn({
     acquireBusyLock,
     autoScrollRef,
@@ -199,9 +202,7 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     releaseBusyLock,
     setConversationId,
     setConversations,
-    setDraft,
     setMessages,
-    setPendingFiles,
     thinkingMode,
     vault,
   });
@@ -219,9 +220,6 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     sendUserTurn,
     vault,
   });
-  const chatReturnPath = conversationId
-    ? `/chat/${encodeURIComponent(conversationId)}`
-    : "/";
   const messageActionContext = useMemo(
     () => ({
       conversationId,
@@ -260,45 +258,60 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     onClose: () => setMobileConversationsOpen(false),
   });
 
-  function openProviderSettings() {
-    navigate("/settings/provider", {
-      state: {
-        returnTo: chatReturnPath,
-      },
-    });
-  }
-
-  function startNewChat() {
+  const startNewChat = useCallback(() => {
     resetActiveConversation();
     resetAutoScroll();
     clearEditingConversation();
-  }
+  }, [clearEditingConversation, resetActiveConversation, resetAutoScroll]);
 
-  function handleOpenConversation(nextConversationId: string) {
+  const handleOpenConversation = useCallback((nextConversationId: string) => {
     setMobileConversationsOpen(false);
     resetAutoScroll();
     clearEditingConversation();
     void openConversation(nextConversationId);
-  }
+  }, [clearEditingConversation, openConversation, resetAutoScroll]);
 
-  function handleComposerModelChange(value: string) {
+  const handleComposerModelChange = useCallback((value: string) => {
     handleModelChange(value);
     closeModelMenu();
-  }
+  }, [closeModelMenu, handleModelChange]);
 
-  async function handleSubmit(event: FormEvent) {
-    event.preventDefault();
-    if ((!draft.trim() && pendingFiles.length === 0) || busyRef.current) return;
+  const handleSettingsPopoverOpenChange = useCallback((open: boolean) => {
+    setMobileConversationsOpen(false);
+    setSettingsPopoverOpen(open);
+  }, []);
+
+  const handleToggleMobileConversations = useCallback(() => {
+    setSettingsPopoverOpen(false);
+    setMobileConversationsOpen((value) => !value);
+  }, []);
+
+  const handleToggleSidebar = useCallback(() => {
+    setSidebarCollapsed((value) => !value);
+  }, []);
+
+  const handleShareConversationSnapshot = useCallback(() => {
+    void shareConversationSnapshot();
+  }, [shareConversationSnapshot]);
+
+  const handleSubmit = useCallback(async ({
+    draft,
+    files,
+  }: {
+    draft: string;
+    files: File[];
+  }) => {
+    if ((!draft.trim() && files.length === 0) || busyRef.current) return false;
 
     const submittedDraft = draft.trim();
-    const submittedFiles = pendingFiles;
+    const submittedFiles = files;
     const pendingAttachments: PendingAttachment[] = submittedFiles.map((file) => ({
       id: crypto.randomUUID(),
       file,
       type: file.type.startsWith("image/") ? "image" : "file",
     }));
 
-    await sendUserTurn({
+    return sendUserTurn({
       parts: [
         ...(submittedDraft ? [{ type: "text" as const, text: submittedDraft }] : []),
         ...pendingAttachments.map((attachment) => ({
@@ -308,9 +321,8 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
       ],
       pendingAttachments,
       title: submittedDraft || submittedFiles[0]?.name || "New conversation",
-      clearComposer: true,
     });
-  }
+  }, [busyRef, sendUserTurn]);
 
   return (
     <section className={sidebarCollapsed ? "chat-layout collapsed" : "chat-layout"}>
@@ -325,16 +337,10 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
         onLogout={onLogout}
         onOpenConversation={handleOpenConversation}
         onRenameSubmit={handleRenameSubmit}
-        onSettingsPopoverOpenChange={(open) => {
-          setMobileConversationsOpen(false);
-          setSettingsPopoverOpen(open);
-        }}
+        onSettingsPopoverOpenChange={handleSettingsPopoverOpenChange}
         onStartNewConversation={startNewChat}
-        onToggleMobileConversations={() => {
-          setSettingsPopoverOpen(false);
-          setMobileConversationsOpen((value) => !value);
-        }}
-        onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
+        onToggleMobileConversations={handleToggleMobileConversations}
+        onToggleSidebar={handleToggleSidebar}
         returnTo={chatReturnPath}
         settingsMenuRef={settingsMenuRef}
         settingsPopoverOpen={settingsPopoverOpen}
@@ -350,9 +356,7 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
               aria-label="Share conversation"
               className="conversation-share-button"
               disabled={busy || !conversationId || messages.length === 0}
-              onClick={() => {
-                void shareConversationSnapshot();
-              }}
+              onClick={handleShareConversationSnapshot}
               title="Share conversation"
               type="button"
             >
@@ -381,22 +385,17 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
         <Composer
           availableModels={availableModels}
           busy={busy}
-          draft={draft}
           fileInputRef={fileInputRef}
           modelMenuOpen={modelMenuOpen}
           modelMenuRef={modelMenuRef}
-          onAddPendingFiles={handleAddPendingFiles}
-          onDraftChange={setDraft}
           onDraftKeyDown={handleDraftKeyDown}
           onModelChange={handleComposerModelChange}
           onReasoningEffortChange={handleReasoningEffortChange}
-          onRemovePendingFile={handleRemovePendingFile}
           onSubmit={handleSubmit}
           onStopResponse={stopResponse}
           onToggleModelMenu={toggleModelMenu}
           onToggleReasoningMenu={toggleReasoningMenu}
           onToggleThinkingMode={toggleThinkingMode}
-          pendingFiles={pendingFiles}
           reasoningEffort={reasoningEffort}
           reasoningEffortOptions={reasoningEffortOptions}
           reasoningMenuOpen={reasoningMenuOpen}

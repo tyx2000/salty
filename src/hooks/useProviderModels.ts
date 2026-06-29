@@ -65,46 +65,73 @@ export function useProviderModels({
     async function loadSavedProviderKeys() {
       try {
         const savedKeys = await loadEncryptedProviderKeys(vault);
+        const providerEntries = providerIds.map((providerId) => ({
+          apiKey: savedKeys[providerId],
+          hiddenModelIds: loadHiddenModelIds(vault.userId, providerId),
+          providerId,
+        }));
 
-        for (const providerId of providerIds) {
-          const apiKey = savedKeys[providerId];
-          if (!apiKey) continue;
-
-          setProviderKeys((current) => ({
-            ...current,
-            [providerId]: {
-              ...current[providerId],
+        setProviderKeys((current) => {
+          const next = { ...current };
+          for (const { apiKey, hiddenModelIds, providerId } of providerEntries) {
+            if (!apiKey) continue;
+            next[providerId] = {
+              ...next[providerId],
               apiKey,
-              hiddenModelIds: loadHiddenModelIds(vault.userId, providerId),
-            },
-          }));
+              hiddenModelIds,
+            };
+          }
+          return next;
+        });
 
-          const result = await testProviderKey(providerId, apiKey);
-          if (cancelled) return;
-          const hiddenModelIds = loadHiddenModelIds(vault.userId, providerId);
-          const models = result.models.map((availableModel) =>
-            enrichProviderModel(providerId, availableModel),
-          );
-          const firstVisibleModel = models.find(
-            (availableModel) => !hiddenModelIds.includes(availableModel.id),
-          );
-
-          setProviderKeys((current) => ({
-            ...current,
-            [providerId]: {
+        const testedProviders = await Promise.all(
+          providerEntries.map(async ({ apiKey, hiddenModelIds, providerId }) => {
+            if (!apiKey) return null;
+            const result = await testProviderKey(providerId, apiKey);
+            const models = result.models.map((availableModel) =>
+              enrichProviderModel(providerId, availableModel),
+            );
+            return {
               apiKey,
               hiddenModelIds,
               models,
-              tested: true,
-            },
-          }));
+              providerId,
+            };
+          }),
+        );
+        if (cancelled) return;
 
-          if (!selectedModelRef.current && firstVisibleModel) {
-            selectedModelRef.current = firstVisibleModel.id;
-            providerRef.current = providerId;
-            setProvider(providerId);
-            setModel(firstVisibleModel.id);
+        const firstVisibleSelection = testedProviders.reduce<{
+          model: string;
+          provider: ProviderId;
+        } | null>((selection, entry) => {
+          if (selection || !entry) return selection;
+          const firstVisibleModel = entry.models.find(
+            (availableModel) => !entry.hiddenModelIds.includes(availableModel.id),
+          );
+          return firstVisibleModel
+            ? { model: firstVisibleModel.id, provider: entry.providerId }
+            : null;
+        }, null);
+        setProviderKeys((current) => {
+          const next = { ...current };
+          for (const entry of testedProviders) {
+            if (!entry) continue;
+            next[entry.providerId] = {
+              apiKey: entry.apiKey,
+              hiddenModelIds: entry.hiddenModelIds,
+              models: entry.models,
+              tested: true,
+            };
           }
+          return next;
+        });
+
+        if (!selectedModelRef.current && firstVisibleSelection) {
+          selectedModelRef.current = firstVisibleSelection.model;
+          providerRef.current = firstVisibleSelection.provider;
+          setProvider(firstVisibleSelection.provider);
+          setModel(firstVisibleSelection.model);
         }
       } catch (unknownError) {
         if (!cancelled) {

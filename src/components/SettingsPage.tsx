@@ -103,43 +103,52 @@ export function SettingsPage({ user, vault }: SettingsPageProps) {
       setProviderError(null);
       try {
         const savedKeys = await loadEncryptedProviderKeys(vault);
-        for (const providerId of providerIds) {
-          const apiKey = savedKeys[providerId];
-          const hiddenModelIds = loadHiddenModelIds(vault.userId, providerId);
-          if (!apiKey) {
-            setProviderKeys((current) => ({
-              ...current,
-              [providerId]: {
-                ...current[providerId],
-                hiddenModelIds,
-              },
-            }));
-            continue;
-          }
-
-          setProviderKeys((current) => ({
-            ...current,
-            [providerId]: {
-              ...current[providerId],
-              apiKey,
+        const providerEntries = providerIds.map((providerId) => ({
+          apiKey: savedKeys[providerId],
+          hiddenModelIds: loadHiddenModelIds(vault.userId, providerId),
+          providerId,
+        }));
+        setProviderKeys((current) => {
+          const next = { ...current };
+          for (const { apiKey, hiddenModelIds, providerId } of providerEntries) {
+            next[providerId] = {
+              ...next[providerId],
+              apiKey: apiKey ?? "",
               hiddenModelIds,
-            },
-          }));
+            };
+          }
+          return next;
+        });
 
-          const result = await testProviderKey(providerId, apiKey);
-          if (cancelled) return;
-          setProviderKeys((current) => ({
-            ...current,
-            [providerId]: {
+        const testedProviders = await Promise.all(
+          providerEntries.map(async ({ apiKey, hiddenModelIds, providerId }) => {
+            if (!apiKey) return null;
+            const result = await testProviderKey(providerId, apiKey);
+            return {
               apiKey,
               hiddenModelIds,
               models: result.models.map((model) =>
                 enrichProviderModel(providerId, model),
               ),
+              providerId,
+            };
+          }),
+        );
+        if (cancelled) return;
+
+        setProviderKeys((current) => {
+          const next = { ...current };
+          for (const entry of testedProviders) {
+            if (!entry) continue;
+            next[entry.providerId] = {
+              apiKey: entry.apiKey,
+              hiddenModelIds: entry.hiddenModelIds,
+              models: entry.models,
               tested: true,
-            },
-          }));
-        }
+            };
+          }
+          return next;
+        });
       } catch (error) {
         if (!cancelled) {
           setProviderError(
@@ -155,10 +164,7 @@ export function SettingsPage({ user, vault }: SettingsPageProps) {
     };
   }, [vault]);
 
-  const dailyUsage = useMemo(() => buildDailyUsage(usageEvents), [usageEvents]);
-  const modelUsage = useMemo(() => buildModelUsage(usageEvents), [usageEvents]);
-  const totalTokens = usageEvents.reduce((total, event) => total + event.totalTokens, 0);
-  const totalLatency = usageEvents.reduce((total, event) => total + event.latencyMs, 0);
+  const usageSummary = useMemo(() => buildUsageSummary(usageEvents), [usageEvents]);
 
   function selectTab(tab: SettingsTab) {
     navigate(tab === "profile" ? "/settings" : `/settings/${tab}`, {
@@ -214,9 +220,9 @@ export function SettingsPage({ user, vault }: SettingsPageProps) {
       <main className="settings-main">
         {activeTab === "profile" ? (
           <ProfilePanel
-            dailyUsage={dailyUsage}
+            dailyUsage={usageSummary.dailyUsage}
             loading={loadingUsage}
-            totalTokens={totalTokens}
+            totalTokens={usageSummary.totalTokens}
             usageError={usageError}
           />
         ) : null}
@@ -225,9 +231,9 @@ export function SettingsPage({ user, vault }: SettingsPageProps) {
         {activeTab === "usage" ? (
           <UsagePanel
             loading={loadingUsage}
-            modelUsage={modelUsage}
-            totalLatency={totalLatency}
-            totalTokens={totalTokens}
+            modelUsage={usageSummary.modelUsage}
+            totalLatency={usageSummary.totalLatency}
+            totalTokens={usageSummary.totalTokens}
             usageError={usageError}
           />
         ) : null}
@@ -522,6 +528,18 @@ type ModelUsage = {
   calls: number;
 };
 
+/** All usage aggregates required by profile and usage settings panels. */
+type UsageSummary = {
+  /** Current year daily token heatmap data. */
+  dailyUsage: DailyUsage;
+  /** Per-model aggregate rows sorted by token usage. */
+  modelUsage: ModelUsage[];
+  /** Sum of all loaded token usage events. */
+  totalTokens: number;
+  /** Sum of all loaded response latencies. */
+  totalLatency: number;
+};
+
 function isSettingsTab(value: string | undefined): value is SettingsTab {
   return tabs.some((tab) => tab.id === value);
 }
@@ -545,17 +563,40 @@ function settingsReturnPath(state: unknown) {
   return "/";
 }
 
-function buildDailyUsage(events: UsageEventRecord[]): DailyUsage {
+function buildUsageSummary(events: UsageEventRecord[]): UsageSummary {
   const year = new Date().getFullYear();
   const start = startOfDay(new Date(year, 0, 1));
   const end = startOfDay(new Date(year, 11, 31));
-
   const tokensByDate = new Map<string, number>();
+  const byModel = new Map<string, ModelUsage>();
+  let totalTokens = 0;
+  let totalLatency = 0;
+
   for (const event of events) {
+    totalTokens += event.totalTokens;
+    totalLatency += event.latencyMs;
+
     const eventDate = new Date(event.createdAt);
-    if (eventDate.getFullYear() !== year) continue;
-    const key = dateKey(eventDate);
-    tokensByDate.set(key, (tokensByDate.get(key) ?? 0) + event.totalTokens);
+    if (eventDate.getFullYear() === year) {
+      const key = dateKey(eventDate);
+      tokensByDate.set(key, (tokensByDate.get(key) ?? 0) + event.totalTokens);
+    }
+
+    const modelKey = `${event.provider}:${event.model}`;
+    const modelUsage =
+      byModel.get(modelKey) ??
+      ({
+        key: modelKey,
+        provider: event.provider,
+        model: event.model,
+        totalTokens: 0,
+        latencyMs: 0,
+        calls: 0,
+      } satisfies ModelUsage);
+    modelUsage.totalTokens += event.totalTokens;
+    modelUsage.latencyMs += event.latencyMs;
+    modelUsage.calls += 1;
+    byModel.set(modelKey, modelUsage);
   }
 
   const values = Array.from(tokensByDate.values());
@@ -578,30 +619,14 @@ function buildDailyUsage(events: UsageEventRecord[]): DailyUsage {
     });
   }
 
-  return { year, days };
-}
-
-function buildModelUsage(events: UsageEventRecord[]) {
-  const byModel = new Map<string, ModelUsage>();
-  for (const event of events) {
-    const key = `${event.provider}:${event.model}`;
-    const current =
-      byModel.get(key) ??
-      ({
-        key,
-        provider: event.provider,
-        model: event.model,
-        totalTokens: 0,
-        latencyMs: 0,
-        calls: 0,
-      } satisfies ModelUsage);
-    current.totalTokens += event.totalTokens;
-    current.latencyMs += event.latencyMs;
-    current.calls += 1;
-    byModel.set(key, current);
-  }
-
-  return [...byModel.values()].sort((left, right) => right.totalTokens - left.totalTokens);
+  return {
+    dailyUsage: { year, days },
+    modelUsage: [...byModel.values()].sort(
+      (left, right) => right.totalTokens - left.totalTokens,
+    ),
+    totalLatency,
+    totalTokens,
+  };
 }
 
 function heatmapLevel(tokens: number, max: number) {

@@ -11,6 +11,9 @@ config({ path: ".env" });
 configureLocalFetchProxy();
 
 export default defineConfig({
+  optimizeDeps: {
+    include: ["lucide-react"],
+  },
   plugins: [react(), localApiPlugin()],
   resolve: {
     alias: {

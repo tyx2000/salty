@@ -92,13 +92,4 @@ export const MessageTimeline = memo(
       </div>
     );
   },
-  (previous, next) =>
-    previous.actionContext === next.actionContext &&
-    previous.busy === next.busy &&
-    previous.loadAttachmentPreview === next.loadAttachmentPreview &&
-    previous.loadingConversations === next.loadingConversations &&
-    previous.loadingMessages === next.loadingMessages &&
-    previous.messages === next.messages &&
-    previous.messagesRef === next.messagesRef &&
-    previous.onMessagesScroll === next.onMessagesScroll,
 );

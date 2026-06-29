@@ -3,6 +3,7 @@ import type {
   KeyboardEvent,
   RefObject,
 } from "react";
+import { useState } from "react";
 import { Paperclip } from "lucide-react";
 import type {
   ProviderId,
@@ -37,28 +38,20 @@ type ComposerProps = {
   availableModels: AvailableModel[];
   /** Whether a request is currently sending or streaming. */
   busy: boolean;
-  /** Current textarea value. */
-  draft: string;
   /** Hidden file input ref used by the attach button. */
   fileInputRef: RefObject<HTMLInputElement | null>;
   /** Whether the model picker menu is open. */
   modelMenuOpen: boolean;
   /** Model picker container ref used for outside-click dismissal. */
   modelMenuRef: RefObject<HTMLDivElement | null>;
-  /** Adds files selected by the hidden file input. */
-  onAddPendingFiles: (files: File[]) => void;
-  /** Updates the controlled textarea value. */
-  onDraftChange: (value: string) => void;
   /** Handles Enter-to-send keyboard behavior. */
   onDraftKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
   /** Selects a provider:model value from the model picker. */
   onModelChange: (value: string) => void;
   /** Selects the reasoning effort for the next request. */
   onReasoningEffortChange: (value: ReasoningEffort) => void;
-  /** Removes a pending file chip by index. */
-  onRemovePendingFile: (index: number) => void;
-  /** Submits the message form. */
-  onSubmit: (event: FormEvent) => void;
+  /** Submits current local draft/files and returns true when Composer should clear them. */
+  onSubmit: (payload: { draft: string; files: File[] }) => Promise<boolean>;
   /** Shows or hides the model picker. */
   onToggleModelMenu: () => void;
   /** Shows or hides the reasoning picker. */
@@ -67,8 +60,6 @@ type ComposerProps = {
   onToggleThinkingMode: () => void;
   /** Aborts the active streaming response. */
   onStopResponse: () => void;
-  /** Files queued to be uploaded with the next user message. */
-  pendingFiles: File[];
   /** Current reasoning effort selection. */
   reasoningEffort: ReasoningEffort;
   /** All reasoning effort choices shown in the menu. */
@@ -91,22 +82,17 @@ type ComposerProps = {
 export function Composer({
   availableModels,
   busy,
-  draft,
   fileInputRef,
   modelMenuOpen,
   modelMenuRef,
-  onAddPendingFiles,
-  onDraftChange,
   onDraftKeyDown,
   onModelChange,
   onReasoningEffortChange,
-  onRemovePendingFile,
   onSubmit,
   onToggleModelMenu,
   onToggleReasoningMenu,
   onToggleThinkingMode,
   onStopResponse,
-  pendingFiles,
   reasoningEffort,
   reasoningEffortOptions,
   reasoningMenuOpen,
@@ -116,15 +102,43 @@ export function Composer({
   selectedSupportsAttachments,
   thinkingMode,
 }: ComposerProps) {
+  const [draft, setDraft] = useState("");
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!draft.trim() && pendingFiles.length === 0) return;
+
+    const shouldClear = await onSubmit({
+      draft,
+      files: pendingFiles,
+    });
+    if (!shouldClear) return;
+
+    setDraft("");
+    setPendingFiles([]);
+  }
+
+  function handleAddPendingFiles(files: File[]) {
+    if (files.length === 0) return;
+    setPendingFiles((current) => [...current, ...files]);
+  }
+
+  function handleRemovePendingFile(index: number) {
+    setPendingFiles((current) =>
+      current.filter((_, fileIndex) => fileIndex !== index),
+    );
+  }
+
   return (
-    <form className="composer" onSubmit={onSubmit}>
+    <form className="composer" onSubmit={handleSubmit}>
       <div className="composer-box">
         <PendingAttachments
           files={pendingFiles}
-          onRemove={onRemovePendingFile}
+          onRemove={handleRemovePendingFile}
         />
         <textarea
-          onChange={(event) => onDraftChange(event.target.value)}
+          onChange={(event) => setDraft(event.target.value)}
           onKeyDown={onDraftKeyDown}
           placeholder="Ask anything..."
           rows={3}
@@ -133,7 +147,7 @@ export function Composer({
         <input
           multiple
           onChange={(event) => {
-            onAddPendingFiles(Array.from(event.target.files ?? []));
+            handleAddPendingFiles(Array.from(event.target.files ?? []));
             event.target.value = "";
           }}
           ref={fileInputRef}

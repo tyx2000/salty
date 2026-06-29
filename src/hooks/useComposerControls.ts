@@ -7,8 +7,8 @@ import type { ReasoningEffort, ThinkingMode } from "@/types/domain";
 import { useClickOutside } from "@/hooks/useClickOutside";
 
 /**
- * Owns composer-local UI state: draft text, pending files, thinking/reasoning
- * selections, and open/close behavior for composer menus.
+ * Owns composer chrome state: thinking/reasoning selections and open/close
+ * behavior for composer menus. Draft text and files stay inside Composer.
  */
 export function useComposerControls() {
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
@@ -16,8 +16,6 @@ export function useComposerControls() {
   const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("disabled");
   const [reasoningEffort, setReasoningEffort] =
     useState<ReasoningEffort>("default");
-  const [draft, setDraft] = useState("");
-  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const reasoningMenuRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -38,17 +36,6 @@ export function useComposerControls() {
     if (event.key !== "Enter" || event.shiftKey) return;
     event.preventDefault();
     event.currentTarget.form?.requestSubmit();
-  }
-
-  function handleAddPendingFiles(files: File[]) {
-    if (files.length === 0) return;
-    setPendingFiles((current) => [...current, ...files]);
-  }
-
-  function handleRemovePendingFile(index: number) {
-    setPendingFiles((current) =>
-      current.filter((_, fileIndex) => fileIndex !== index),
-    );
   }
 
   function handleReasoningEffortChange(value: ReasoningEffort) {
@@ -78,20 +65,14 @@ export function useComposerControls() {
 
   return {
     closeModelMenu,
-    draft,
     fileInputRef,
-    handleAddPendingFiles,
     handleDraftKeyDown,
     handleReasoningEffortChange,
-    handleRemovePendingFile,
     modelMenuOpen,
     modelMenuRef,
-    pendingFiles,
     reasoningEffort,
     reasoningMenuOpen,
     reasoningMenuRef,
-    setDraft,
-    setPendingFiles,
     thinkingMode,
     toggleModelMenu,
     toggleReasoningMenu,

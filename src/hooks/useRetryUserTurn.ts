@@ -40,7 +40,7 @@ type UseRetryUserTurnOptions = {
   /** Releases the shared send lock when retry setup fails. */
   releaseBusyLock: () => void;
   /** Sends the replacement turn after retry setup succeeds. */
-  sendUserTurn: (options: SendUserTurnOptions) => Promise<void>;
+  sendUserTurn: (options: SendUserTurnOptions) => Promise<boolean>;
   /** Unlocked encryption vault used for attachment materialization and deletion. */
   vault: UnlockedVault;
 };

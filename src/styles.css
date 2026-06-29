@@ -1069,6 +1069,8 @@ textarea {
 }
 
 .message {
+  contain-intrinsic-size: 0 160px;
+  content-visibility: auto;
   display: grid;
   gap: 8px;
   margin: 0 auto;
