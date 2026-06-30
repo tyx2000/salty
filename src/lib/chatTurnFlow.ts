@@ -62,35 +62,17 @@ export function resolveTurnConfig({
   };
 }
 
-export function buildStreamMessages(
-  historyMessages: ChatMessage[],
+export function buildCurrentRequestMessage(
   completedUserMessage: ChatMessage,
   requestAttachmentMap: Record<string, ChatAttachment>,
-  globalInstructions = "",
 ) {
-  const trimmedInstructions = globalInstructions.trim();
-
-  return [
-    ...(trimmedInstructions
-      ? [
-          {
-            id: "global-instructions",
-            role: "system" as const,
-            status: "completed" as const,
-            parts: [{ type: "text" as const, text: trimmedInstructions }],
-            createdAt: new Date(0).toISOString(),
-          },
-        ]
-      : []),
-    ...historyMessages,
-    {
-      ...completedUserMessage,
-      attachments: {
-        ...completedUserMessage.attachments,
-        ...requestAttachmentMap,
-      },
+  return {
+    ...completedUserMessage,
+    attachments: {
+      ...completedUserMessage.attachments,
+      ...requestAttachmentMap,
     },
-  ];
+  };
 }
 
 export function createCompletedAssistantMessage({

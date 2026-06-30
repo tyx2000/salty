@@ -59,6 +59,15 @@ export const profiles = pgTable("profiles", {
   updatedAt,
 });
 
+export const userPreferences = pgTable("user_preferences", {
+  userId: uuid("user_id")
+    .primaryKey()
+    .references(() => profiles.id, { onDelete: "cascade" }),
+  preferences: jsonb("preferences").notNull(),
+  createdAt,
+  updatedAt,
+});
+
 // Stores the user's wrapped data key. The plaintext master key never leaves the browser.
 export const encryptedVaultKeys = pgTable(
   "encrypted_vault_keys",
@@ -216,6 +225,59 @@ export const messageParts = pgTable(
     messageOrderIdx: index("message_parts_message_order_idx").on(
       table.messageId,
       table.orderIndex,
+    ),
+  }),
+);
+
+export const conversationSummaries = pgTable(
+  "conversation_summaries",
+  {
+    conversationId: uuid("conversation_id")
+      .primaryKey()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => profiles.id, { onDelete: "cascade" }),
+    summary: text("summary").notNull(),
+    messageCount: integer("message_count").notNull().default(0),
+    lastMessageId: uuid("last_message_id").references(() => messages.id, {
+      onDelete: "set null",
+    }),
+    createdAt,
+    updatedAt,
+  },
+  (table) => ({
+    userUpdatedIdx: index("conversation_summaries_user_updated_idx").on(
+      table.userId,
+      table.updatedAt,
+    ),
+  }),
+);
+
+export const userMemories = pgTable(
+  "user_memories",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => profiles.id, { onDelete: "cascade" }),
+    content: text("content").notNull(),
+    sourceConversationId: uuid("source_conversation_id").references(
+      () => conversations.id,
+      { onDelete: "set null" },
+    ),
+    sourceMessageId: uuid("source_message_id").references(() => messages.id, {
+      onDelete: "set null",
+    }),
+    status: text("status").notNull().default("active"),
+    createdAt,
+    updatedAt,
+  },
+  (table) => ({
+    userStatusUpdatedIdx: index("user_memories_user_status_updated_idx").on(
+      table.userId,
+      table.status,
+      table.updatedAt,
     ),
   }),
 );

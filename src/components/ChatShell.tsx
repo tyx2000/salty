@@ -8,11 +8,14 @@ import {
 import type { User } from "@supabase/supabase-js";
 import { useLocation, useNavigate } from "react-router";
 import {
+  Info,
   PenLine,
   Share2,
   Trash2,
+  X,
 } from "lucide-react";
 import type { ReasoningEffort } from "@/types/domain";
+import type { ChatContextSnapshot } from "@/lib/chatApi";
 import type { ConversationListItem } from "@/lib/conversations";
 import type { PendingAttachment } from "@/lib/messages";
 import { routeConversationIdFromPath } from "@/lib/chatRoutes";
@@ -65,6 +68,9 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [queuedDraft, setQueuedDraft] = useState<string | null>(null);
+  const [contextInspectorOpen, setContextInspectorOpen] = useState(false);
+  const [lastContextSnapshot, setLastContextSnapshot] =
+    useState<ChatContextSnapshot | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   const mobileConversationsRef = useRef<HTMLDivElement | null>(null);
   const {
@@ -197,6 +203,7 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     navigateHome: () => navigate("/"),
     navigateToConversation: (nextConversationId) =>
       navigate(`/chat/${encodeURIComponent(nextConversationId)}`),
+    onContextSnapshot: setLastContextSnapshot,
     onError: setError,
     onOpenProviderSettings: openProviderSettings,
     providerKeys,
@@ -264,6 +271,8 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
     resetActiveConversation();
     resetAutoScroll();
     clearEditingConversation();
+    setContextInspectorOpen(false);
+    setLastContextSnapshot(null);
   }, [clearEditingConversation, resetActiveConversation, resetAutoScroll]);
 
   useEffect(() => {
@@ -273,6 +282,8 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
 
   const handleOpenConversation = useCallback((nextConversationId: string) => {
     setMobileConversationsOpen(false);
+    setContextInspectorOpen(false);
+    setLastContextSnapshot(null);
     resetAutoScroll();
     clearEditingConversation();
     void openConversation(nextConversationId);
@@ -300,6 +311,10 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
   const handleShareConversationSnapshot = useCallback(() => {
     void shareConversationSnapshot();
   }, [shareConversationSnapshot]);
+
+  const handleToggleContextInspector = useCallback(() => {
+    setContextInspectorOpen((value) => !value);
+  }, []);
 
   const handleQueueDraft = useCallback((draft: string) => {
     const nextDraft = draft.trim();
@@ -387,6 +402,16 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
           <strong>{activeConversationTitle}</strong>
           <div className="conversation-meta">
             <button
+              aria-label="Inspect context"
+              className="conversation-share-button"
+              disabled={!lastContextSnapshot}
+              onClick={handleToggleContextInspector}
+              title="Inspect context"
+              type="button"
+            >
+              <Info size={14} />
+            </button>
+            <button
               aria-label="Share conversation"
               className="conversation-share-button"
               disabled={busy || !conversationId || messages.length === 0}
@@ -398,6 +423,48 @@ export function ChatShell({ user, vault, onLogout }: ChatShellProps) {
             </button>
           </div>
         </header>
+
+        {contextInspectorOpen ? (
+          <aside className="context-inspector" aria-label="Context inspector">
+            <header>
+              <div>
+                <strong>Context inspector</strong>
+                <span>
+                  {lastContextSnapshot
+                    ? `${lastContextSnapshot.provider}:${lastContextSnapshot.model}`
+                    : "No context captured"}
+                </span>
+              </div>
+              <button
+                aria-label="Close context inspector"
+                className="icon-button"
+                onClick={() => setContextInspectorOpen(false)}
+                type="button"
+              >
+                <X size={15} />
+              </button>
+            </header>
+            {lastContextSnapshot ? (
+              <div className="context-inspector-list">
+                {lastContextSnapshot.blocks.map((block, index) => (
+                  <details
+                    className="context-inspector-block"
+                    key={`${block.kind}-${index}`}
+                    open={index < 3}
+                  >
+                    <summary>
+                      <span>{block.title}</span>
+                      <code>{block.kind}</code>
+                    </summary>
+                    <pre>{block.content}</pre>
+                  </details>
+                ))}
+              </div>
+            ) : (
+              <p>No context has been captured for this conversation yet.</p>
+            )}
+          </aside>
+        ) : null}
 
         <MessageTimeline
           actionContext={messageActionContext}

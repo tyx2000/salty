@@ -450,42 +450,42 @@ export const languageStyles: LanguageStyleOption[] = [
     label: "专业可靠",
     description: "结构清晰，判断稳健，适合默认工作场景。",
     instruction:
-      "使用“专业可靠”的回答风格：先给清晰结论，再给依据和步骤；措辞准确、克制、可信，避免玩笑、夸张和情绪化表达。",
+      "使用“专业可靠”的回答风格：第一段给明确结论；随后用有条理的短段落说明依据、影响和执行步骤；措辞准确、克制、可信，避免玩笑、夸张、情绪化表达和过度口语化。",
   },
   {
     id: "friendly",
     label: "亲和友善",
     description: "语气更温和，解释更照顾阅读感受。",
     instruction:
-      "使用“亲和友善”的回答风格：语气温和、有耐心，适当解释背景和原因；保持准确，不使用空泛鼓励，不显得冷硬。",
+      "使用“亲和友善”的回答风格：语气明显更温和、有耐心，解释时多照顾读者感受；可以使用自然的承接句和轻柔措辞，但保持准确，不使用空泛鼓励，不显得冷硬。",
   },
   {
     id: "direct",
     label: "直言不讳",
     description: "先给结论，直接指出问题和取舍。",
     instruction:
-      "使用“直言不讳”的回答风格：第一句直接给结论；明确指出问题、风险和取舍；删掉客套、铺垫和模糊表述。",
+      "使用“直言不讳”的回答风格：第一句必须直接给结论；明确指出问题、风险和取舍；删掉客套、铺垫、委婉缓冲和模糊表述；句子短，态度清楚。",
   },
   {
     id: "imaginative",
     label: "天马行空",
     description: "更开放，适合创意和探索性任务。",
     instruction:
-      "使用“天马行空”的回答风格：在事实准确的前提下，表达更有画面感和创造性；给出更开放的方案、类比或发散视角。",
+      "使用“天马行空”的回答风格：在事实准确的前提下，表达要明显更有画面感、创造性和发散感；主动给出开放方案、类比、另类视角或大胆但可执行的可能性。",
   },
   {
     id: "efficient",
     label: "高效务实",
     description: "减少铺垫，优先给可执行步骤。",
     instruction:
-      "使用“高效务实”的回答风格：减少解释和修饰，优先给可执行动作、代码层面建议和下一步；使用短句和紧凑结构。",
+      "使用“高效务实”的回答风格：减少解释、修饰和背景铺垫；优先给可执行动作、代码层面建议和下一步；使用短句、紧凑结构和高信息密度。",
   },
   {
     id: "roast",
     label: "犀利吐槽",
     description: "更锋利，但不做人身攻击。",
     instruction:
-      "使用“犀利吐槽”的回答风格：可以用尖锐、带一点吐槽感的方式评价方案和代码问题；吐槽只针对问题本身，不做人身攻击，仍要给出专业修正建议。",
+      "使用“犀利吐槽”的回答风格：表达要明显更锋利，可以带一点吐槽感评价方案、代码或决策问题；吐槽只针对问题本身，不做人身攻击；吐槽后必须给出专业、可执行的修正建议。",
   },
 ];
 
@@ -499,6 +499,10 @@ export function loadUserPreferences(): UserPreferences {
   } catch {
     return defaultUserPreferences;
   }
+}
+
+export function normalizeUserPreferences(value: unknown): UserPreferences {
+  return normalizePreferences(value);
 }
 
 export function saveUserPreferences(preferences: UserPreferences) {
@@ -545,22 +549,36 @@ export function loadGlobalInstructions() {
 
 export function composeGlobalInstructions(preferences: UserPreferences) {
   const normalized = normalizePreferences(preferences);
-  const style =
-    languageStyles.find((item) => item.id === normalized.languageStyle) ??
-    languageStyles[0];
   const memoryInstruction = normalized.memoryEnabled
     ? "记忆已开启：可以使用系统明确提供的已保存用户记忆作为额外上下文；不要编造未提供的记忆。"
     : "记忆已关闭：不要使用跨会话记忆，只依据当前对话、当前文件上下文和用户显式指令回答。";
   const globalInstructions = normalized.globalInstructions.trim();
 
-  const styleInstruction = [
-    "语言风格要求（高优先级）：下面的风格必须在每次回答中明显体现；除非用户临时要求另一种语气，否则不要忽略它。",
-    style.instruction,
-  ].join("\n");
+  const userInstruction = globalInstructions
+    ? [
+        "用户全局指令（最高优先级）：以下内容是用户在 Settings > Personalization > Global instructions 中保存的长期要求，必须应用到每一次回答。",
+        "如果这些要求与默认语言风格、memory 说明或普通偏好冲突，以用户全局指令为准。",
+        globalInstructions,
+      ].join("\n")
+    : "";
+  const styleInstruction = composeLanguageStyleInstruction(normalized);
 
-  return [styleInstruction, memoryInstruction, globalInstructions]
+  return [userInstruction, styleInstruction, memoryInstruction]
     .filter(Boolean)
     .join("\n\n");
+}
+
+export function composeLanguageStyleInstruction(preferences: UserPreferences) {
+  const normalized = normalizePreferences(preferences);
+  const style =
+    languageStyles.find((item) => item.id === normalized.languageStyle) ??
+    languageStyles[0];
+
+  return [
+    `当前语言风格：${style.label}`,
+    "这是本次回答的强约束，必须让用户能明显感受到风格差异。不要沿用上一条回答的默认语气，除非用户当前消息明确要求其他风格。",
+    style.instruction,
+  ].join("\n");
 }
 
 function normalizePreferences(value: unknown): UserPreferences {

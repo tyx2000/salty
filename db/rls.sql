@@ -2,12 +2,15 @@
 -- Every user-owned table must keep auth.uid() aligned with user_id.
 
 alter table profiles enable row level security;
+alter table user_preferences enable row level security;
+alter table user_memories enable row level security;
 alter table encrypted_vault_keys enable row level security;
 alter table user_provider_keys enable row level security;
 alter table model_presets enable row level security;
 alter table conversations enable row level security;
 alter table messages enable row level security;
 alter table message_parts enable row level security;
+alter table conversation_summaries enable row level security;
 alter table attachments enable row level security;
 alter table attachment_storage_deletions enable row level security;
 alter table usage_events enable row level security;
@@ -18,6 +21,16 @@ create policy "profiles are self owned"
 on profiles for all
 using ((select auth.uid()) = id)
 with check ((select auth.uid()) = id);
+
+create policy "preferences are self owned"
+on user_preferences for all
+using ((select auth.uid()) = user_id)
+with check ((select auth.uid()) = user_id);
+
+create policy "memories are self owned"
+on user_memories for all
+using ((select auth.uid()) = user_id)
+with check ((select auth.uid()) = user_id);
 
 create policy "vault keys are self owned"
 on encrypted_vault_keys for all
@@ -60,6 +73,11 @@ with check (
     and messages.user_id = (select auth.uid())
   )
 );
+
+create policy "conversation summaries are self owned"
+on conversation_summaries for all
+using ((select auth.uid()) = user_id)
+with check ((select auth.uid()) = user_id);
 
 create policy "attachments are self owned"
 on attachments for all

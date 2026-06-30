@@ -19,7 +19,7 @@ import {
   updateMessageContent,
 } from "@/lib/messages";
 import type { PendingAttachment } from "@/lib/messages";
-import { streamChat } from "@/lib/chatApi";
+import { streamChat, type ChatContextSnapshot } from "@/lib/chatApi";
 import { createAssistantStreamState } from "@/lib/assistantStreamState";
 import { createChatTurnDraft } from "@/lib/chatTurnDraft";
 import {
@@ -28,14 +28,13 @@ import {
 } from "@/lib/conversationListUtils";
 import { createUsageEventRecorder } from "@/lib/chatUsageRecorder";
 import {
-  buildStreamMessages,
+  buildCurrentRequestMessage,
   createCompletedAssistantMessage,
   resolveTurnConfig,
 } from "@/lib/chatTurnFlow";
 import { handleEmptyAssistantResponse } from "@/lib/emptyAssistantResponse";
 import { safeTouchConversation } from "@/lib/messageSettlement";
 import { rollbackFailedTurn } from "@/lib/turnRollback";
-import { loadGlobalInstructions } from "@/lib/userPreferences";
 import type { UnlockedVault } from "@/lib/vault";
 
 /** Options for sending one user turn to the selected provider. */
@@ -80,6 +79,8 @@ type UseSendUserTurnOptions = {
   navigateToConversation: (conversationId: string) => void;
   /** Receives send, stream, save, and rollback errors for display. */
   onError: (message: string | null) => void;
+  /** Receives the server-composed context for debug inspection. */
+  onContextSnapshot?: (context: ChatContextSnapshot | null) => void;
   /** Opens provider settings when a configured/tested API key is missing. */
   onOpenProviderSettings: () => void;
   /** Tested provider key state used to resolve API key and model availability. */
@@ -115,6 +116,7 @@ export function useSendUserTurn({
   navigateHome,
   navigateToConversation,
   onError,
+  onContextSnapshot,
   onOpenProviderSettings,
   providerKeys,
   reasoningEffort,
@@ -195,6 +197,7 @@ export function useSendUserTurn({
       lockHeld = true;
     }
     onError(null);
+    onContextSnapshot?.(null);
     autoScrollRef.current = true;
 
     let turnDraft: Awaited<ReturnType<typeof createChatTurnDraft>>;
@@ -314,15 +317,18 @@ export function useSendUserTurn({
         apiKey,
         thinkingMode,
         reasoningEffort,
-        messages: buildStreamMessages(
-          resolvedHistoryMessages,
+        conversationId: nextConversationId,
+        assistantMessageId: assistantMessage.id,
+        currentMessage: buildCurrentRequestMessage(
           completedUserMessage,
           requestAttachmentMap,
-          loadGlobalInstructions(),
         ),
         signal: abortController.signal,
         onToken: (token) => {
           assistantStreamState.appendToken(token);
+        },
+        onContext: (context) => {
+          onContextSnapshot?.(context);
         },
         onUsage: (usage) => {
           assistantStreamState.setUsage(usage);

@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { loadUserPreferences } from "./userPreferences";
 import type {
   ChatMessage,
   ChatUsage,
@@ -10,20 +11,36 @@ import type {
 } from "@/types/domain";
 
 export type ChatApiInput = {
+  assistantMessageId: string;
+  conversationId: string;
+  currentMessage: ChatMessage;
   provider: ProviderId;
   model: string;
   apiKey: string;
-  messages: ChatMessage[];
   thinkingMode?: ThinkingMode;
   reasoningEffort?: ReasoningEffort;
   onToken: (token: string) => void;
+  onContext?: (context: ChatContextSnapshot) => void;
   onUsage?: (usage: ChatUsage) => void;
   signal?: AbortSignal;
 };
 
 type ChatStreamEvent =
   | { type: "token"; text: string }
+  | { type: "context"; context: ChatContextSnapshot }
   | { type: "usage"; usage: ChatUsage };
+
+export type ChatContextSnapshot = {
+  generatedAt: string;
+  conversationId?: string;
+  model: string;
+  provider: ProviderId;
+  blocks: Array<{
+    title: string;
+    kind: "instructions" | "summary" | "memories" | "style" | "request";
+    content: string;
+  }>;
+};
 
 export async function streamChat(input: ChatApiInput) {
   let assistantText = "";
@@ -41,11 +58,10 @@ export async function streamChat(input: ChatApiInput) {
         apiKey: input.apiKey,
         thinkingMode: input.thinkingMode,
         reasoningEffort: input.reasoningEffort,
-        messages: input.messages.map(({ role, parts, attachments }) => ({
-          role,
-          parts,
-          attachments,
-        })),
+        conversationId: input.conversationId,
+        assistantMessageId: input.assistantMessageId,
+        preferences: loadUserPreferences(),
+        currentMessage: serializeChatMessage(input.currentMessage),
       }),
     });
   } catch (error) {
@@ -90,9 +106,11 @@ export async function streamChat(input: ChatApiInput) {
         if (event.type === "token") {
           assistantText += event.text;
           input.onToken(event.text);
-        } else {
+        } else if (event.type === "usage") {
           usage = event.usage;
           input.onUsage?.(event.usage);
+        } else {
+          input.onContext?.(event.context);
         }
       }
     }
@@ -105,6 +123,8 @@ export async function streamChat(input: ChatApiInput) {
     if (event?.type === "usage") {
       usage = event.usage;
       input.onUsage?.(event.usage);
+    } else if (event?.type === "context") {
+      input.onContext?.(event.context);
     }
   }
 
@@ -117,6 +137,15 @@ export async function streamChat(input: ChatApiInput) {
   };
 }
 
+function serializeChatMessage({ id, role, parts, attachments }: ChatMessage) {
+  return {
+    id,
+    role,
+    parts,
+    attachments,
+  };
+}
+
 function parseChatStreamEvent(line: string): ChatStreamEvent | null {
   if (!line.trim()) return null;
 
@@ -124,10 +153,24 @@ function parseChatStreamEvent(line: string): ChatStreamEvent | null {
     const event = JSON.parse(line) as ChatStreamEvent;
     if (event.type === "token" && typeof event.text === "string") return event;
     if (event.type === "usage" && event.usage) return event;
+    if (event.type === "context" && isChatContextSnapshot(event.context)) {
+      return event;
+    }
     return null;
   } catch {
     return null;
   }
+}
+
+function isChatContextSnapshot(value: unknown): value is ChatContextSnapshot {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<ChatContextSnapshot>;
+  return (
+    typeof candidate.generatedAt === "string" &&
+    typeof candidate.model === "string" &&
+    typeof candidate.provider === "string" &&
+    Array.isArray(candidate.blocks)
+  );
 }
 
 export function textFromParts(parts: MessagePart[]) {

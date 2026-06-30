@@ -22,6 +22,7 @@ import {
   emptyProviderKeyState,
   loadEncryptedProviderKeys,
 } from "@/lib/providerKeys";
+import { saveCloudUserPreferences } from "@/lib/cloudUserPreferences";
 import { loadUsageEvents, type UsageEventRecord } from "@/lib/usageEvents";
 import {
   applyUserPreferences,
@@ -214,6 +215,9 @@ export function SettingsPage({ user, vault }: SettingsPageProps) {
   function updatePreferences(nextPreferences: UserPreferences) {
     setPreferences(nextPreferences);
     saveUserPreferences(nextPreferences);
+    void saveCloudUserPreferences(user.id, nextPreferences).catch((error) => {
+      console.warn("Unable to save cloud preferences.", error);
+    });
     applyUserPreferences(nextPreferences);
   }
 
@@ -292,6 +296,7 @@ export function SettingsPage({ user, vault }: SettingsPageProps) {
           <PersonalizationPanel
             preferences={preferences}
             updatePreferences={updatePreferences}
+            userId={user.id}
           />
         ) : null}
         {activeTab === "shortcut" ? (

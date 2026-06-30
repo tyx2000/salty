@@ -17,6 +17,11 @@ import { env } from "./lib/env";
 import type { ShareKind } from "./lib/shares";
 import { supabase } from "./lib/supabase";
 import {
+  loadCloudUserPreferences,
+  saveCloudUserPreferences,
+  subscribeCloudUserPreferences,
+} from "./lib/cloudUserPreferences";
+import {
   applyUserPreferences,
   colorSchemes,
   fontSizes,
@@ -38,6 +43,45 @@ export default function App() {
     applyUserPreferences(loadUserPreferences());
   }, []);
 
+  const user = useMemo<User | null>(() => session?.user ?? null, [session]);
+
+  useEffect(() => {
+    if (!user) return;
+    const userId = user.id;
+    let cancelled = false;
+
+    async function syncCloudPreferences() {
+      const localPreferences = loadUserPreferences();
+
+      try {
+        const cloudPreferences = await loadCloudUserPreferences(userId);
+        if (cancelled) return;
+
+        if (cloudPreferences) {
+          saveUserPreferences(cloudPreferences);
+          applyUserPreferences(cloudPreferences);
+          return;
+        }
+
+        await saveCloudUserPreferences(userId, localPreferences);
+      } catch (error) {
+        console.warn("Unable to sync cloud preferences.", error);
+      }
+    }
+
+    void syncCloudPreferences();
+    const unsubscribe = subscribeCloudUserPreferences(userId, (nextPreferences) => {
+      if (cancelled) return;
+      saveUserPreferences(nextPreferences);
+      applyUserPreferences(nextPreferences);
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [user]);
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
@@ -53,8 +97,6 @@ export default function App() {
 
     return () => subscription.unsubscribe();
   }, []);
-
-  const user = useMemo<User | null>(() => session?.user ?? null, [session]);
 
   useEffect(() => {
     let cancelled = false;
@@ -140,7 +182,7 @@ function AuthenticatedWorkspace({
     /^\/chat\/[^/]+$/.test(location.pathname) ||
     settingsMatch;
 
-  useConfiguredShortcuts(navigate);
+  useConfiguredShortcuts(navigate, user.id);
 
   if (!knownAppRoute) return <Navigate replace to="/" />;
 
@@ -152,7 +194,10 @@ function AuthenticatedWorkspace({
   );
 }
 
-function useConfiguredShortcuts(navigate: ReturnType<typeof useNavigate>) {
+function useConfiguredShortcuts(
+  navigate: ReturnType<typeof useNavigate>,
+  userId: string,
+) {
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented) return;
@@ -168,17 +213,18 @@ function useConfiguredShortcuts(navigate: ReturnType<typeof useNavigate>) {
       if (!action) return;
 
       event.preventDefault();
-      runShortcutAction(action.id, navigate);
+      runShortcutAction(action.id, navigate, userId);
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [navigate]);
+  }, [navigate, userId]);
 }
 
 function runShortcutAction(
   actionId: ShortcutActionId,
   navigate: ReturnType<typeof useNavigate>,
+  userId: string,
 ) {
   const preferences = loadUserPreferences();
 
@@ -203,6 +249,9 @@ function runShortcutAction(
       colorScheme: nextScheme.id,
     };
     saveUserPreferences(nextPreferences);
+    void saveCloudUserPreferences(userId, nextPreferences).catch((error) => {
+      console.warn("Unable to save cloud preferences.", error);
+    });
     applyUserPreferences(nextPreferences);
     return;
   }
@@ -214,9 +263,13 @@ function runShortcutAction(
     const nextStyle =
       languageStyles[(currentIndex + 1) % languageStyles.length] ??
       languageStyles[0];
-    saveUserPreferences({
+    const nextPreferences = {
       ...preferences,
       languageStyle: nextStyle.id,
+    };
+    saveUserPreferences(nextPreferences);
+    void saveCloudUserPreferences(userId, nextPreferences).catch((error) => {
+      console.warn("Unable to save cloud preferences.", error);
     });
     return;
   }
@@ -235,6 +288,9 @@ function runShortcutAction(
       fontSize: fontSizes[nextIndex].id,
     };
     saveUserPreferences(nextPreferences);
+    void saveCloudUserPreferences(userId, nextPreferences).catch((error) => {
+      console.warn("Unable to save cloud preferences.", error);
+    });
     applyUserPreferences(nextPreferences);
     return;
   }
